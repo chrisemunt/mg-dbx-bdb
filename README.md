@@ -24,9 +24,9 @@ Contents
 
 ## <a name="Intro"></a> Introduction
 
-More will be written about the aims and rationale for this project in due course.  In the meantime, what follows in this section is a brief description of the functionality provided by this Node.js add-on modules.
+More will be written about the aims and rationale for this project in due course.  In the meantime, what follows in this section is a brief description of the functionality provided by this Node.js add-on module.
 
-There are two parts to this project.  Firstly, simple asynchronous and asynchronous access to Berkeley DB B-Tree storage using either integer or string based keys and, secondly, a Berkeley DB based emulation of the M database storage model.
+There are two parts to this project.  Firstly, simple synchronous and asynchronous access to Berkeley DB B-Tree storage using either integer or string based keys and, secondly, a Berkeley DB based emulation of the M database storage model.
 
 ### Berkeley DB Mode
 
