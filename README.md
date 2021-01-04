@@ -113,7 +113,7 @@ And optionally (as required):
        var mglobal = require('mg-dbx-bdb').mglobal;
        var mcursor = require('mg-dbx-bdb').mcursor;
 
-### Create a Server Object
+### Create a Database Object
 
        var db = new dbxbdb();
 
@@ -629,16 +629,11 @@ In **mg-dbx-bdb** the default character encoding scheme is UTF-8.  When transmit
 
 On the input (to the database) side all **mg-dbx-bdb** function arguments can be presented as Node.js Buffers and **mg-dbx-bdb** will automatically detect that an argument is a Buffer and process it accordingly.
 
-On the output side the following functions can be used to return the output as a Node.js Buffer.
+On the retrieval side, the following functions can be used to return the output as a Node.js Buffer.
 
-* dbx::function\_bx
-* dbx::classmethod\_bx
-
+* db::get\_bx
 * mglobal::get\_bx
 
-* mclass::classmethod\_bx
-* mclass::method\_bx
-* mclass::getproperty\_bx
 
 These functions work the same way as their non '_bx' suffixed counterparts.  The only difference is that they will return data as a Node.js Buffer as opposed to a type of String.
 
@@ -647,17 +642,17 @@ The following two examples illustrate the two schemes for receiving binary data 
 Example 1: Receive binary data from a DB function as a Node.js 8-bit character stream
 
        <db>.charset('ascii');
-       var stream_str8 = <db>.function(<function>, <parameters>);
+       var stream_str8 = <db>.get(<key>);
        <db>.charset('utf-8'); // reset character encoding
 
-Example 2: Receive binary data from a DB function as a Node.js Buffer
+Example 2: Receive binary data from a DB record as a Node.js Buffer
 
-       var stream_buffer = <db>.function_bx(<function>, <parameters>);
+       var stream_buffer = <db>.get_bx(<key>);
 
 
 ## <a name="Threads"></a> Using Node.js/V8 worker threads
 
-**mg-dbx-bdb** functionality can now be used with Node.js/V8 worker threads.  This enhancement is available with Node.js v12 (and later).
+**mg-dbx-bdb** functionality can be used with Node.js/V8 worker threads.  This enhancement is available with Node.js v12 (and later).
 
 * Note: be sure to include the property **multithreaded: true** in the **open** method when opening database  connections to be used in multi-threaded applications.
 
@@ -672,16 +667,6 @@ Use the following constructs for instantiating **mg-dbx-bdb** objects in multi-t
         var <cursor> = new mcursor(<db>, <global_query>);
         // Instead of:
         var <cursor> = <db>.mglobalquery(<global_query>)
-
-        // Use:
-        var <class> = new mclass(<db>, <classmethod>);
-        // Instead of:
-        var <class> = <db>.classmethod(<classmethod>);
-
-        // Use:
-        var <sql> = new mcursor(<db>, <sqlquery>);
-        // Instead of:
-        var <sql> = <db>.sql(<sqlquery>);
 
 
 The following scheme illustrates how **mg-dbx-bdb** should be used in threaded Node.js applications.
@@ -701,13 +686,12 @@ The following scheme illustrates how **mg-dbx-bdb** should be used in threaded N
              console.log(message);
           });
        } else {
-          var dbx = require('mg-dbx-bdb').dbx;
+          var dbxbdb = require('mg-dbx-bdb').dbxbdb;
           // And as required ...
           var mglobal = require('mg-dbx-bdb').mglobal;
           var mcursor = require('mg-dbx-bdb').mcursor;
-          var mclass = require('mg-dbx-bdb').mclass;
 
-          var db = new dbx();
+          var db = new dbxbdb();
           db.open(<parameters>);
 
           var global = new mglobal(db, <global>);
@@ -721,7 +705,7 @@ The following scheme illustrates how **mg-dbx-bdb** should be used in threaded N
 
 ## <a name="EventLog"></a> The Event Log
 
-**mg\-dbx** provides an Event Log facility for recording errors in a physical file and, as an aid to debugging, recording the **mg\-dbx** functions called by the application.  This Log facility can also be used by Node.js applications.
+**mg\-dbx\-bdb** provides an Event Log facility for recording errors in a physical file and, as an aid to debugging, recording the **mg\-dbx\-bdb** functions called by the application.  This Log facility can also be used by Node.js applications.
 
 To use this facility, the Event Log file must be specified using the following function:
 
@@ -733,8 +717,8 @@ Where:
 * **log\_file**: The name (and path to) the log file you wish to use. The default is c:/temp/mg-dbx-bdb.log (or /tmp/mg-dbx-bdb.log under UNIX).
 * **log\_level**: A set of characters to include one or more of the following:
 	* **e** - Log error conditions.
-	* **f** - Log all **mg\-dbx** function calls (function name and arguments).
-	* **t** - Log the request data buffers to be transmitted from **mg\-dbx** to the DB Server.
+	* **f** - Log all **mg\-dbx\-bdb** function calls (function name and arguments).
+	* **t** - Log the request data buffers to be transmitted from **mg\-dbx\-bdb** to the DB Server.
 * **log\_filter**: A comma-separated list of functions that you wish the log directive to be active for. This should be left empty to activate the log for all functions.
 
 Examples:
@@ -752,7 +736,7 @@ Logging can be switched off by calling the **setloglevel** function without spec
 
 ## <a name="License"></a> License
 
-Copyright (c) 2018-2020 M/Gateway Developments Ltd,
+Copyright (c) 2018-2021 M/Gateway Developments Ltd,
 Surrey UK.                                                      
 All rights reserved.
  
