@@ -752,6 +752,6 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 ## <a name="RelNotes"></a>Release Notes
 
-### v1.0.1 (1 January 2020)
+### v1.0.1 (1 January 2021)
 
 * Initial Release
