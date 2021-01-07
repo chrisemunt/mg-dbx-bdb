@@ -1,9 +1,9 @@
 /*
    ----------------------------------------------------------------------------
-   | mg-dbx.node                                                              |
+   | mg-dbx-bdb.node                                                          |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -30,6 +30,9 @@ Change Log:
 
 Version 1.0.1 1 January 2021:
    First release.
+
+Version 1.0.2 7 January 2021:
+   Correct a fault in the processing of integer based keys.
 
 */
 
@@ -1007,7 +1010,7 @@ int DBX_DBNAME::LogFunction(DBX_DBNAME *c, const FunctionCallbackInfo<Value>& ar
    strcpy(buffer + max, ")");
    max += 1;
 
-   dbx_log_event(c->pcon, buffer, (char *) "mg-dbx: Function", 0);
+   dbx_log_event(c->pcon, buffer, (char *) "mg-dbx-bdb: Function", 0);
 
    dbx_free((void *) buffer, 0);
 
@@ -1193,7 +1196,7 @@ void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
       dbx_create_string(&(pmeth->output_val.svalue), (void *) "", DBX_DTYPE_STR8);
    }
    else if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::GetEx");
    }
 
    DBX_DBFUN_END(c);
@@ -1275,7 +1278,7 @@ void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Set");
    }
 
    DBX_DBFUN_END(c);
@@ -1348,7 +1351,7 @@ void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
    rc = dbx_defined(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Defined");
    }
 
    DBX_DBFUN_END(c);
@@ -1424,7 +1427,7 @@ void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Delete");
    }
 
    DBX_DBFUN_END(c);
@@ -1496,7 +1499,7 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
    rc = dbx_next(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Next");
    }
 
    DBX_DBFUN_END(c);
@@ -1568,7 +1571,7 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
    rc = dbx_previous(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Previous");
    }
 
    DBX_DBFUN_END(c);
@@ -1642,7 +1645,7 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
    rc = dbx_increment(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Increment");
    }
 
    DBX_DBFUN_END(c);
@@ -1715,7 +1718,7 @@ void DBX_DBNAME::Lock(const FunctionCallbackInfo<Value>& args)
    rc = dbx_lock(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Lock");
    }
 
    DBX_DBFUN_END(c);
@@ -1788,7 +1791,7 @@ void DBX_DBNAME::Unlock(const FunctionCallbackInfo<Value>& args)
    rc = dbx_unlock(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Unlock");
    }
 
    DBX_DBFUN_END(c);
@@ -2084,7 +2087,7 @@ void DBX_DBNAME::Dump(const FunctionCallbackInfo<Value>& args)
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Dump");
       DBX_DB_UNLOCK(rc);
       return;
    }
@@ -2199,11 +2202,11 @@ void DBX_DBNAME::Dump(const FunctionCallbackInfo<Value>& args)
    }
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Dump");
    }
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Dump");
    }
 
    DBX_DBFUN_END(c);
@@ -2547,6 +2550,7 @@ int dbx_ibuffer_add(DBXMETH *pmeth, DBXKEY *pkey, v8::Isolate * isolate, int arg
 {
    int len, n;
    unsigned char *p;
+   char nstr[64];
    DBXCON *pcon = pmeth->pcon;
 
 #ifdef _WIN32
@@ -2636,6 +2640,13 @@ __try {
       }
       if (pkey->args[argn].svalue.len_used == 0) { /* null - so introducing sequence must be \x00\x00 */
          pkey->ibuffer[pkey->ibuffer_used - 1] = 0x00;
+      }
+   }
+   else { /* v1.0.2 */
+      if (pkey->args[argn].type == DBX_DTYPE_STR && dbx_is_number(&pkey->args[argn])) { /* See if we have a stringified number */
+         strncpy(nstr, pkey->args[argn].svalue.buf_addr, pkey->args[argn].svalue.len_used);
+         nstr[pkey->args[argn].svalue.len_used] = '\0';
+         pkey->args[argn].num.int32 = (int) strtol(nstr, NULL, 10);
       }
    }
 
@@ -3579,8 +3590,10 @@ int bdb_next(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, in
       printf("\r\nstarting from ...");
       dbx_dump_key((char *) key.data, (int) key.size);
 */
+
       if (key.size == 0) {
          rc = pcursor->get(pcursor, &key, &data, DB_FIRST);
+
          if (rc == CACHE_SUCCESS)
             pkeyval->svalue.len_used = key.size;
          else {
@@ -3630,6 +3643,7 @@ int bdb_next(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, in
    }
 
    if (rc != CACHE_SUCCESS) {
+      rc = CACHE_SUCCESS;
       pkeyval->svalue.len_used = 0;
    }
 
@@ -3880,6 +3894,7 @@ int bdb_key_compare(DBT *key1, DBT *key2, int compare_max, short keytype)
 
 int bdb_error_message(DBXCON *pcon, int error_code)
 {
+   sprintf(pcon->error, "Berkeley DB error code: %d", error_code);
    return 0;
 }
 
@@ -4145,7 +4160,7 @@ __try {
    rc = dbx_global_reference(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_get");
       goto dbx_get_exit;
    }
 
@@ -4183,7 +4198,7 @@ __try {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) "", DBX_DTYPE_STR8);
    }
    else if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_get");
    }
 
 dbx_get_exit:
@@ -4229,7 +4244,7 @@ __try {
    rc = dbx_global_reference(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_set");
       goto dbx_set_exit;
    }
 
@@ -4270,7 +4285,7 @@ __try {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_set");
    }
 
 dbx_set_exit:
@@ -4316,7 +4331,7 @@ __try {
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_defined");
       goto dbx_defined_exit;
    }
 
@@ -4382,13 +4397,14 @@ __try {
             pcursor->close(pcursor);
          }
       }
+      rc = CACHE_SUCCESS;
    }
 
    if (rc == CACHE_SUCCESS || rc == CACHE_ERUNDEF) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_defined");
    }
 
 dbx_defined_exit:
@@ -4435,7 +4451,7 @@ __try {
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_delete");
       goto dbx_delete_exit;
    }
 
@@ -4504,7 +4520,7 @@ __try {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_delete");
    }
 
 dbx_delete_exit:
@@ -4548,7 +4564,7 @@ __try {
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_next");
       goto dbx_next_exit;
    }
 
@@ -4557,7 +4573,7 @@ __try {
    }
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_next");
    }
 
 dbx_next_exit:
@@ -4601,7 +4617,7 @@ __try {
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_previous");
       goto dbx_previous_exit;
    }
 
@@ -4610,7 +4626,7 @@ __try {
    }
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_previous");
    }
 
 dbx_previous_exit:
@@ -4657,7 +4673,7 @@ __try {
    pmeth->increment = 1;
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_increment");
       goto dbx_increment_exit;
    }
 
@@ -4700,7 +4716,7 @@ __try {
    }
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_increment");
    }
 
 dbx_increment_exit:
@@ -4747,7 +4763,7 @@ __try {
    pmeth->lock = 1;
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_lock");
       goto dbx_lock_exit;
    }
 
@@ -4783,7 +4799,7 @@ __try {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_lock");
    }
 
 dbx_lock_exit:
@@ -4828,7 +4844,7 @@ __try {
    pmeth->lock = 2;
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_unlock");
       goto dbx_unlock_exit;
    }
 
@@ -4844,7 +4860,7 @@ __try {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_unlock");
    }
 
 dbx_unlock_exit:
@@ -4897,7 +4913,7 @@ __try {
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_merge");
       goto dbx_merge_exit;
    }
 
@@ -5074,7 +5090,7 @@ __try {
    }
    else {
       eod = 1;
-      dbx_error_message(pmeth, rc);
+      /* dbx_error_message(pmeth, rc, (char *) "dbx_global_directory"); */
    }
 
    return eod;
@@ -5135,9 +5151,9 @@ __try {
       }
    }
 
-   if (rc != CACHE_SUCCESS) {
+   if (rc != CACHE_SUCCESS && rc != YDB_NODE_END) {
       eod = 1;
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "dbx_global_order");
    }
 
    return eod;
@@ -5423,8 +5439,8 @@ __try {
       rc = YDB_NODE_END;
    }
 
-   if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+   if (rc != CACHE_SUCCESS && rc != YDB_NODE_END) {
+      dbx_error_message(pmeth, rc, (char *) "dbx_global_query");
    }
 
    return eod;
@@ -6022,7 +6038,7 @@ int dbx_log_transmission(DBXCON *pcon, DBXMETH *pmeth, char *name)
          return 0;
       }
    }
-   sprintf(buffer, (char *) "mg-web: transmission: %s", name);
+   sprintf(buffer, (char *) "mg-dbx-bdb: transmission: %s", name);
 
    dbx_log_buffer(pcon, (char *) pmeth->key.ibuffer, pmeth->key.ibuffer_used, buffer, 0);
 
@@ -6344,9 +6360,10 @@ unsigned long dbx_current_process_id(void)
 }
 
 
-int dbx_error_message(DBXMETH *pmeth, int error_code)
+int dbx_error_message(DBXMETH *pmeth, int error_code, char *function)
 {
    int rc;
+   char title[128];
    DBXCON *pcon = pmeth->pcon;
 
    rc = 0;
@@ -6355,7 +6372,8 @@ int dbx_error_message(DBXMETH *pmeth, int error_code)
    }
 
    if (pcon->log_errors) {
-      dbx_log_event(pcon, pcon->error, (char *) "mg-dbx: error", 0);
+      sprintf(title, (char *) "mg-dbx-bdb: error in function: %s", function);
+      dbx_log_event(pcon, pcon->error, (char *) title, 0);
    }
 
    return rc;

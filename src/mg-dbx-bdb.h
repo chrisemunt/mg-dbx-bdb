@@ -1,9 +1,9 @@
 /*
    ----------------------------------------------------------------------------
-   | mg-dbx.node                                                              |
+   | mg-dbx-bdb.node                                                          |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "1"
 #define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "1"
+#define DBX_VERSION_BUILD        "2"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -1022,7 +1022,7 @@ DBXPROC                    dbx_dso_sym                (DBXPLIB p_library, char *
 int                        dbx_dso_unload             (DBXPLIB p_library);
 DBXTHID                    dbx_current_thread_id      (void);
 unsigned long              dbx_current_process_id     (void);
-int                        dbx_error_message          (DBXMETH *pmeth, int error_code);
+int                        dbx_error_message          (DBXMETH *pmeth, int error_code, char * function);
 
 int                        dbx_mutex_create           (DBXMUTEX *p_mutex);
 int                        dbx_mutex_lock             (DBXMUTEX *p_mutex, int timeout);

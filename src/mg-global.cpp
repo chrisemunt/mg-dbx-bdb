@@ -1,9 +1,9 @@
 /*
    ----------------------------------------------------------------------------
-   | mg-dbx.node                                                              |
+   | mg-dbx-bdb.node                                                          |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2020 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -289,7 +289,7 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
       dbx_create_string(&(pmeth->output_val.svalue), (void *) "", DBX_DTYPE_STR8);
    }
    else if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::GetEx");
    }
 
    DBX_DBFUN_END(c);
@@ -375,7 +375,7 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
       dbx_create_string(&(pmeth->output_val.svalue), &rc, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::Set");
    }
 
    DBX_DBFUN_END(c);
@@ -449,7 +449,7 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
    rc = dbx_defined(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::Defined");
    }
 
    DBX_DBFUN_END(c);
@@ -527,7 +527,7 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::Delete");
    }
 
 
@@ -602,7 +602,7 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    rc = dbx_next(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::Next");
    }
 
    DBX_DBFUN_END(c);
@@ -676,7 +676,7 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
    rc = dbx_previous(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::Previous");
    }
 
    DBX_DBFUN_END(c);
@@ -752,7 +752,7 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
    rc = dbx_increment(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::Increment");
    }
 
    DBX_DBFUN_END(c);
@@ -832,7 +832,7 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    rc = dbx_lock(pmeth);
  
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::Lock");
    }
 
    DBX_DBFUN_END(c);
@@ -907,7 +907,7 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
    rc = dbx_unlock(pmeth);
 
    if (rc != CACHE_SUCCESS) {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::Unlock");
    }
 
    DBX_DBFUN_END(c);
@@ -1032,14 +1032,14 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
    }
 
    pmeth->jsargc = nx;
-
+/*
    {
       int n;
       for (n = 0; n < nx; n ++) {
          printf("\r\npmeth->key.argc=%d; pmeth->jsargc=%d; n=%d; type=%d; sort=%d; len=%d; csize=%d; s=%s;", pmeth->key.argc, pmeth->jsargc, n, pmeth->key.args[n].type, pmeth->key.args[n].sort, pmeth->key.args[n].svalue.len_used, pmeth->key.args[n].csize, pmeth->key.args[n].svalue.buf_addr);
       }
    }
-
+*/
 
    if (mglobal1 == 0) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The global to merge from is not specified", 1)));
@@ -1078,7 +1078,7 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
    }
    else {
-      dbx_error_message(pmeth, rc);
+      dbx_error_message(pmeth, rc, (char *) "mglobal::Merge");
    }
 
    DBX_DBFUN_END(c);
