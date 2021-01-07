@@ -3,9 +3,10 @@
 High speed Synchronous and Asynchronous access to Berkeley DB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>
-1 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+7 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* This is an experimental project at this stage.  **It is definitely not ready for production use!**
+* The M database emulation mode is an experimental project at this stage.
+* The Berkeley DB mode should be stable.
 * Verified to work with Node.js v14 to v15.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
@@ -755,3 +756,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.0.1 (1 January 2021)
 
 * Initial Release
+
+### v1.0.2 (7 January 2021)
+
+* Correct a fault in the processing of integer based keys.
