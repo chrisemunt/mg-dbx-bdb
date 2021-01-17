@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to Berkeley DB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>
-7 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+17 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * The M database emulation mode is an experimental project at this stage.
 * The Berkeley DB mode should be stable.
@@ -720,6 +720,7 @@ Where:
 	* **e** - Log error conditions.
 	* **f** - Log all **mg\-dbx\-bdb** function calls (function name and arguments).
 	* **t** - Log the request data buffers to be transmitted from **mg\-dbx\-bdb** to the DB Server.
+	* **r** - Log the request data buffers to be transmitted from **mg\-dbx\-bdb** to the DB Server and the corresponding response data.
 * **log\_filter**: A comma-separated list of functions that you wish the log directive to be active for. This should be left empty to activate the log for all functions.
 
 Examples:
@@ -760,3 +761,12 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.0.2 (7 January 2021)
 
 * Correct a fault in the processing of integer based keys.
+
+### v1.0.3 (17 January 2021)
+
+* Miscellaneous bug fixes.
+* Extend the logging of request transmission data to include the corresponding response data.
+	* Include 'r' in the log level.  For example: db.setloglevel("MyLog.log", "eftr", "");
+
+
+
