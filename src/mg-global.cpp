@@ -295,6 +295,10 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
    
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::get");
+   }
+
    if (binary) {
       Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
       args.GetReturnValue().Set(bx);
@@ -381,6 +385,10 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::set");
+   }
+
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -454,6 +462,10 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::defined");
+   }
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -534,6 +546,10 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::delete");
+   }
+
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -608,6 +624,10 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::next");
+   }
+
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -681,6 +701,10 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::previous");
+   }
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
 
@@ -757,6 +781,10 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::increment");
+   }
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -838,6 +866,10 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::lock");
+   }
+
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -912,6 +944,10 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::unlock");
+   }
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -1082,6 +1118,10 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
    }
 
    DBX_DBFUN_END(c);
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::merge");
+   }
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);

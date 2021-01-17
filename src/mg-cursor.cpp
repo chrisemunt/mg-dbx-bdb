@@ -370,7 +370,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
    pmeth->pcursor = (DBC *) cx->pcursor;
-   //pmeth->key_len = cx->key_len;
+
    if (pcon->key_type == DBX_KEYTYPE_M)
       key_start = 1;
    else
@@ -613,7 +613,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    }
    pmeth = dbx_request_memory(pcon, 0);
    pmeth->pcursor = (DBC *) cx->pcursor;
-   //pmeth->key_len = cx->key_len;
+
    if (pcon->key_type == DBX_KEYTYPE_M)
       key_start = 1;
    else

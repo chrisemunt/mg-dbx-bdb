@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "1"
 #define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "2"
+#define DBX_VERSION_BUILD        "3"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -804,7 +804,6 @@ typedef struct tagDBXMETH {
    short          increment;
    int            binary;
    int            jsargc;
-   //int            key_len;
    DBXKEY         key;
    DBXVAL         output_val;
    DBXVAL         output_key;
@@ -895,6 +894,7 @@ public:
    static void                   Open                             (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Close                            (const v8::FunctionCallbackInfo<v8::Value>& args);
    static int                    LogFunction                      (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, void *pctx, char *name);
+   static v8::Local<v8::String>  StringifyJSON                    (DBX_DBNAME *c, v8::Local<v8::Object> json);
    static int                    GlobalReference                  (DBX_DBNAME *c, const v8::FunctionCallbackInfo<v8::Value>& args, DBXMETH *pmeth, DBXGREF *pgref, short context);
 
    static void                   Get                              (const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -1013,6 +1013,7 @@ int                        dbx_lcase                  (char *string);
 int                        dbx_create_string          (DBXSTR *pstr, void *data, short type);
 
 int                        dbx_log_transmission       (DBXCON *pcon, DBXMETH *pmeth, char *name);
+int                        dbx_log_response           (DBXCON *pcon, char *ibuffer, int ibuffer_len, char *name);
 int                        dbx_buffer_dump            (DBXMETH *pmeth, void *buffer, unsigned int len, char *title, unsigned char csize, short mode);
 int                        dbx_log_event              (DBXCON *pcon, char *message, char *title, int level);
 int                        dbx_log_buffer             (DBXCON *pcon, char *buffer, int buffer_len, char *title, int level);

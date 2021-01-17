@@ -34,6 +34,11 @@ Version 1.0.1 1 January 2021:
 Version 1.0.2 7 January 2021:
    Correct a fault in the processing of integer based keys.
 
+Version 1.0.3 17 January 2021:
+   Miscellaneous bug fixes.
+   Extend the logging of request transmission data to include the corresponding response data.
+   - Include 'r' in the log level.  For example: db.setloglevel("MyLog.log", "eftr", "");
+   
 */
 
 
@@ -546,7 +551,12 @@ void DBX_DBNAME::SetLogLevel(const FunctionCallbackInfo<Value>& args)
          pcon->log_functions = 1;
       }
       if (strstr(buffer, "t")) {
-         pcon->log_transmissions = 1;
+         if (!pcon->log_transmissions) {
+            pcon->log_transmissions = 1;
+         }
+      }
+      if (strstr(buffer, "r")) { /* v1.0.3 */
+         pcon->log_transmissions = 2;
       }
    }
    if (js_narg > 2) {
@@ -858,8 +868,6 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
 
       rc = dbx_open(pmeth);
 
-printf("\r\n cmtxxx OPEN =============================; rc=%d;", rc);
-
       if (rc == CACHE_SUCCESS) {
          c->open = 1;
       }
@@ -885,6 +893,10 @@ printf("\r\n cmtxxx OPEN =============================; rc=%d;", rc);
 
    if (rc == CACHE_SUCCESS) {
       c->open = 1; 
+   }
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pcon->error, (int) strlen(pcon->error), (char *) DBX_DBNAME_STR "::open");
    }
 
    Local<String> result = dbx_new_string8(isolate, pcon->error, 0);
@@ -960,10 +972,11 @@ Close_Exit:
 
 int DBX_DBNAME::LogFunction(DBX_DBNAME *c, const FunctionCallbackInfo<Value>& args, void *pctx, char *name)
 {
-   int n, argc, max;
+   int n, argc, max, otype;
    int len[DBX_MAXARGS];
    char * buffer;
    char namex[64];
+   Local<Object> obj;
    Local<String> f;
    Local<String> str[DBX_MAXARGS];
    DBX_GET_ICONTEXT;
@@ -982,8 +995,12 @@ int DBX_DBNAME::LogFunction(DBX_DBNAME *c, const FunctionCallbackInfo<Value>& ar
    f = dbx_new_string8(isolate, (char *) "[callback]", 1);
 
    for (n = 0; n < argc; n ++) {
+      obj = dbx_is_object(args[n], &otype);
       if (args[n]->IsFunction()) {
          str[n] = f;
+      }
+      else if (otype == 1) {
+         str[n] = StringifyJSON(c, obj);
       }
       else {
          str[n] = DBX_TO_STRING(args[n]);
@@ -1015,6 +1032,28 @@ int DBX_DBNAME::LogFunction(DBX_DBNAME *c, const FunctionCallbackInfo<Value>& ar
    dbx_free((void *) buffer, 0);
 
    return 0;
+}
+
+
+Local<String> DBX_DBNAME::StringifyJSON(DBX_DBNAME *c, Local<Object> json)
+{
+   Local<String> json_string;
+   Isolate* isolate = Isolate::GetCurrent();
+#if DBX_NODE_VERSION >= 100000
+   Local<Context> icontext = isolate->GetCurrentContext();
+#endif
+   EscapableHandleScope handle_scope(isolate);
+
+   Local<Object> global = isolate->GetCurrentContext()->Global();
+   Local<Object> JSON = Local<Object>::Cast(DBX_GET(global, dbx_new_string8(isolate, (char *) "JSON", 1)));
+   Local<Function> stringify = Local<Function>::Cast(DBX_GET(JSON, dbx_new_string8(isolate, (char *) "stringify", 1)));
+   Local<Value> args[] = { json };
+#if DBX_NODE_VERSION >= 120000
+   json_string = Local<String>::Cast(stringify->Call(icontext, JSON, 1, args).ToLocalChecked());
+#else
+   json_string = Local<String>::Cast(stringify->Call(JSON, 1, args));
+#endif
+   return handle_scope.Escape(json_string);
 }
 
 
@@ -1064,6 +1103,7 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
                dbx_ibuffer_add(pmeth, &(pmeth->key), isolate, nx, str, buffer, (int) strlen(buffer), 0);
             }
             else {
+               pmeth->key.args[nx].type = DBX_DTYPE_STR;
                dbx_ibuffer_add(pmeth, &(pmeth->key), isolate, nx, str, pval->svalue.buf_addr, (int) pval->svalue.len_used, 0);
             }
             nx ++;
@@ -1202,6 +1242,10 @@ void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::get");
+   }
+
    if (binary) {
       Local<Object> bx = node::Buffer::New(isolate, (char *) pmeth->output_val.svalue.buf_addr, (size_t) pmeth->output_val.svalue.len_used).ToLocalChecked();
       args.GetReturnValue().Set(bx);
@@ -1287,6 +1331,10 @@ void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::set");
+   }
+
    dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
@@ -1356,6 +1404,10 @@ void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::defined");
+   }
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -1433,6 +1485,10 @@ void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::delete");
+   }
+
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -1505,6 +1561,10 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::next");
+   }
+
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -1576,6 +1636,10 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::previous");
+   }
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
 
@@ -1651,6 +1715,10 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::increment");
+   }
+
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -1724,6 +1792,10 @@ void DBX_DBNAME::Lock(const FunctionCallbackInfo<Value>& args)
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
 
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::lock");
+   }
+
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
    dbx_request_memory_free(pcon, pmeth, 0);
@@ -1796,6 +1868,10 @@ void DBX_DBNAME::Unlock(const FunctionCallbackInfo<Value>& args)
 
    DBX_DBFUN_END(c);
    DBX_DB_UNLOCK(rc);
+
+   if (pcon->log_transmissions == 2) {
+      dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::unlock");
+   }
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -2872,6 +2948,10 @@ int dbx_global_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
 __try {
 #endif
 
+   if (pcon->log_functions && gx && gx->c) {
+      gx->c->LogFunction(gx->c, args, NULL, (char *) "dbx_global_reset");
+   }
+
    dbx_write_char8(isolate, DBX_TO_STRING(args[argc_offset]), global_name, pcon->utf8);
    if (global_name[0] == '\0') {
       return -1;
@@ -2996,6 +3076,10 @@ int dbx_cursor_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
 #ifdef _WIN32
 __try {
 #endif
+
+   if (pcon->log_functions && cx && cx->c) {
+      cx->c->LogFunction(cx->c, args, NULL, (char *) "dbx_cursor_reset");
+   }
 
    if (pmeth->jsargc < 1) {
       return -1;
@@ -3643,8 +3727,10 @@ int bdb_next(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, in
    }
 
    if (rc != CACHE_SUCCESS) {
-      rc = CACHE_SUCCESS;
       pkeyval->svalue.len_used = 0;
+   }
+   if (pkeyval->svalue.len_used == 0) {
+      rc = YDB_NODE_END;
    }
 
    return rc;
@@ -4380,16 +4466,21 @@ __try {
          rc = pcon->p_bdb_so->dbp->cursor(pcon->p_bdb_so->dbp, NULL, &pcursor, 0);
          if (rc == CACHE_SUCCESS) {
 /*
-            printf("\r\nkey.ulen=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", (int) key.ulen, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
+            printf("\r\ndbx_defined: n=%d; key.ulen=%d; key.size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", n, (int) key.ulen, (int) key.size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
 */
             rc = pcursor->get(pcursor, &key, &data, DB_SET_RANGE);
 /*
-            printf("\r\nrc=%d key.size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", rc, (int) key.size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
+            printf("\r\ndbx_defined: DB_SET_RANGE: n=%d; rc=%d key.size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", n, rc, (int) key.size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
             dbx_dump_key((char *) key.data, (int) key.size);
 */
-            if (rc == CACHE_SUCCESS && key.size == pmeth->key.args[pmeth->key.argc - 1].csize && !bdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
-               rc = pcursor->get(pcursor, &key, &data, DB_NEXT);
-               /* dbx_dump_key((char *) key.data, (int) key.size); */
+            if (rc == CACHE_SUCCESS) {
+               if (n && key.size == pmeth->key.args[pmeth->key.argc - 1].csize && !bdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) { /* current record defined, get next */
+                  rc = pcursor->get(pcursor, &key, &data, DB_NEXT);
+/*
+                  printf("\r\ndbx_defined: DB_NEXT: n=%d; rc=%d key.size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", n, rc, (int) key.size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
+                  dbx_dump_key((char *) key.data, (int) key.size);
+*/
+               }
                if (rc == CACHE_SUCCESS && key.size > pmeth->key.args[pmeth->key.argc - 1].csize && !bdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
                   n += 10;
                }
@@ -5059,6 +5150,17 @@ int dbx_global_directory(DBXMETH *pmeth, DBXQR *pqr_prev, short dir, int *counte
 __try {
 #endif
 
+   if (pcon->log_transmissions) {
+      int nx;
+      v8::Local<v8::String> str;
+
+      pmeth->key.ibuffer_used = 0;
+      nx = 0;
+      dbx_ibuffer_add(pmeth, &(pmeth->key), NULL, nx ++, str, pqr_prev->global_name.buf_addr, pqr_prev->global_name.len_used, 0);
+      dbx_log_transmission(pcon, pmeth, (char *) (dir == 1 ? "mcursor::next (global directory)" : "mcursor::previous (global directory)"));
+      pmeth->key.ibuffer_used = 0;
+   }
+
    rc = 0;
    eod = 0;
    if (pqr_prev->global_name.buf_addr[0] != '^') {
@@ -5091,6 +5193,13 @@ __try {
    else {
       eod = 1;
       /* dbx_error_message(pmeth, rc, (char *) "dbx_global_directory"); */
+   }
+
+   if (pcon->log_transmissions == 2) {
+      if (eod)
+         dbx_log_response(pcon, (char *) "[END]", (int) 5, (char *) (dir == 1 ? "mcursor::next (global directory)" : "mcursor::previous (global directory)"));
+      else
+         dbx_log_response(pcon, (char *) pqr_prev->global_name.buf_addr, (int) pqr_prev->global_name.len_used, (char *) (dir == 1 ? "mcursor::next (global directory)" : "mcursor::previous (global directory)"));
    }
 
    return eod;
@@ -5138,7 +5247,7 @@ __try {
       for (n = 0; n < pqr_prev->key.argc; n ++) {
          dbx_ibuffer_add(pmeth, &(pmeth->key), NULL, nx ++, str, pqr_prev->key.args[n].svalue.buf_addr, pqr_prev->key.args[n].svalue.len_used, 0);
       }
-      dbx_log_transmission(pcon, pmeth, (char *) (dir == 1 ? "mcursor::next" : "mcursor::previous"));
+      dbx_log_transmission(pcon, pmeth, (char *) (dir == 1 ? "mcursor::next (order)" : "mcursor::previous (order)"));
       pmeth->key.ibuffer_used = 0;
    }
 
@@ -5154,6 +5263,16 @@ __try {
    if (rc != CACHE_SUCCESS && rc != YDB_NODE_END) {
       eod = 1;
       dbx_error_message(pmeth, rc, (char *) "dbx_global_order");
+   }
+   if (rc == YDB_NODE_END || pmeth->output_val.svalue.len_used == 0) {
+      eod = 1;
+   }
+
+   if (pcon->log_transmissions == 2) {
+      if (pmeth->output_val.svalue.len_used == 0)
+         dbx_log_response(pcon, (char *) "[END]", (int) 5, (char *) (dir == 1 ? "mcursor::next (order)" : "mcursor::previous (order)"));
+      else
+         dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (dir == 1 ? "mcursor::next (order)" : "mcursor::previous (order)"));
    }
 
    return eod;
@@ -5441,6 +5560,24 @@ __try {
 
    if (rc != CACHE_SUCCESS && rc != YDB_NODE_END) {
       dbx_error_message(pmeth, rc, (char *) "dbx_global_query");
+   }
+
+   if (pcon->log_transmissions == 2) {
+      if (eod)
+         dbx_log_response(pcon, (char *) "[END]", (int) 5, (char *) (dir == 1 ? "mcursor::next (query)" : "mcursor::previous (query)"));
+      else {
+         int nx;
+         v8::Local<v8::String> str;
+
+         pmeth->key.ibuffer_used = 0;
+         nx = 0;
+         dbx_ibuffer_add(pmeth, &(pmeth->key), NULL, nx ++, str, pqr_next->global_name.buf_addr, pqr_next->global_name.len_used, 0);
+         for (n = 0; n < pqr_next->key.argc; n ++) {
+            dbx_ibuffer_add(pmeth, &(pmeth->key), NULL, nx ++, str, (char *) pqr_next->key.args[n].svalue.buf_addr, (int) pqr_next->key.args[n].svalue.len_used, 0);
+         }
+         dbx_log_response(pcon, (char *) pmeth->key.ibuffer, (int) pmeth->key.ibuffer_used, (char *) (dir == 1 ? "mcursor::next (query)" : "mcursor::previous (query)"));
+         pmeth->key.ibuffer_used = 0;
+      }
    }
 
    return eod;
@@ -6041,6 +6178,27 @@ int dbx_log_transmission(DBXCON *pcon, DBXMETH *pmeth, char *name)
    sprintf(buffer, (char *) "mg-dbx-bdb: transmission: %s", name);
 
    dbx_log_buffer(pcon, (char *) pmeth->key.ibuffer, pmeth->key.ibuffer_used, buffer, 0);
+
+   return 0;
+}
+
+
+int dbx_log_response(DBXCON *pcon, char *ibuffer, int ibuffer_len, char *name)
+{
+   char namex[64];
+   char buffer[256];
+
+   if (pcon->log_filter[0]) {
+      strcpy(namex, ",");
+      strcat(namex, name);
+      strcat(namex, ",");
+      if (!strstr(pcon->log_filter, namex)) {
+         return 0;
+      }
+   }
+   sprintf(buffer, (char *) "mg-dbx-bdb: response: %s", name);
+
+   dbx_log_buffer(pcon, (char *) ibuffer, ibuffer_len, buffer, 0);
 
    return 0;
 }
