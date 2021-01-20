@@ -369,6 +369,9 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       c->LogFunction(c, args, (void *) cx, (char *) "mcursor::next");
    }
    pmeth = dbx_request_memory(pcon, 0);
+   if (!cx->pcursor) {
+      goto Next_EOD;
+   }
    pmeth->pcursor = (DBC *) cx->pcursor;
 
    if (pcon->key_type == DBX_KEYTYPE_M)
@@ -395,9 +398,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    if (cx->context == 1) {
    
       if (cx->pqr_prev->key.argc < 1) {
-         args.GetReturnValue().Set(DBX_NULL());
-         dbx_request_memory_free(pcon, pmeth, 0);
-         return;
+         goto Next_EOD;
       }
 
       DBX_DBFUN_START(c, pcon, pmeth);
@@ -409,20 +410,9 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       DBX_DB_UNLOCK(n);
 
       if (eod) {
-         args.GetReturnValue().Set(DBX_NULL());
+         goto Next_EOD;
       }
       else if (cx->getdata == 0) {
-/*
-         if (cx->pqr_prev->key.args[cx->pqr_prev->key.argc - 1].svalue.len_used && cx->pqr_prev->key.args[cx->pqr_prev->key.argc - 1].svalue.len_used < 10) {
-            int n;
-            char buffer[32];
-            strncpy(buffer, cx->pqr_prev->key.args[cx->pqr_prev->key.argc - 1].svalue.buf_addr, cx->pqr_prev->key.args[cx->pqr_prev->key.argc - 1].svalue.len_used);
-            buffer[cx->pqr_prev->key.args[cx->pqr_prev->key.argc - 1].svalue.len_used] = '\0';
-            n = (int) strtol(buffer, NULL, 10);
-            args.GetReturnValue().Set(DBX_INTEGER_NEW(n));
-            return;
-         }
-*/
          key = dbx_new_string8n(isolate, cx->pqr_prev->key.args[cx->pqr_prev->key.argc - 1].svalue.buf_addr, cx->pqr_prev->key.args[cx->pqr_prev->key.argc - 1].svalue.len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
@@ -524,8 +514,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       else {
          args.GetReturnValue().Set(DBX_NULL());
       }
-      dbx_request_memory_free(pcon, pmeth, 0);
-      return;
+      goto Next_OK;
    }
    else if (cx->context == 9) {
 
@@ -544,17 +533,14 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
          key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
-      dbx_request_memory_free(pcon, pmeth, 0);
-      return;
+      goto Next_OK;
    }
    else if (cx->context == 11) {
 
       pmeth->psql = cx->psql;
 
       if (!pmeth->psql) {
-         args.GetReturnValue().Set(DBX_NULL());
-         dbx_request_memory_free(pcon, pmeth, 0);
-         return;
+         goto Next_EOD;
       }
 
       eod = dbx_sql_row(pmeth, pmeth->psql->row_no, 1);
@@ -583,10 +569,20 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
 
          args.GetReturnValue().Set(obj);
       }
-      dbx_request_memory_free(pcon, pmeth, 0);
-      return;
+      goto Next_OK;
    }
+
+Next_OK:
    dbx_request_memory_free(pcon, pmeth, 0);
+   return;
+
+Next_EOD:
+   args.GetReturnValue().Set(DBX_NULL());
+   dbx_request_memory_free(pcon, pmeth, 0);
+   if (cx->pcursor) {
+      ((DBC *) cx->pcursor)->close((DBC *) cx->pcursor);
+      cx->pcursor = NULL;
+   }
    return;
 }
 
@@ -612,6 +608,9 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       c->LogFunction(c, args, (void *) cx, (char *) "mcursor::previous");
    }
    pmeth = dbx_request_memory(pcon, 0);
+   if (!cx->pcursor) {
+      goto Previous_EOD;
+   }
    pmeth->pcursor = (DBC *) cx->pcursor;
 
    if (pcon->key_type == DBX_KEYTYPE_M)
@@ -638,9 +637,7 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    if (cx->context == 1) {
    
       if (cx->pqr_prev->key.argc < 1) {
-         args.GetReturnValue().Set(DBX_NULL());
-         dbx_request_memory_free(pcon, pmeth, 0);
-         return;
+         goto Previous_EOD;
       }
 
       DBX_DBFUN_START(c, pcon, pmeth);
@@ -757,10 +754,9 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
             args.GetReturnValue().Set(obj);
       }
       else {
-         args.GetReturnValue().Set(DBX_NULL());
+         goto Previous_EOD;
       }
-      dbx_request_memory_free(pcon, pmeth, 0);
-      return;
+      goto Previous_OK;
    }
    else if (cx->context == 9) {
    
@@ -773,28 +769,25 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       DBX_DB_UNLOCK(n);
 
       if (eod) {
-         args.GetReturnValue().Set(DBX_NULL());
+         goto Previous_EOD;
       }
       else {
          key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, pcon->utf8);
          args.GetReturnValue().Set(key);
       }
-      dbx_request_memory_free(pcon, pmeth, 0);
-      return;
+      goto Previous_OK;
    }
    else if (cx->context == 11) {
 
       pmeth->psql = cx->psql;
 
       if (!pmeth->psql) {
-         args.GetReturnValue().Set(DBX_NULL());
-         dbx_request_memory_free(pcon, pmeth, 0);
-         return;
+         goto Previous_EOD;
       }
 
       eod = dbx_sql_row(pmeth, pmeth->psql->row_no, -1);
       if (eod) {
-         args.GetReturnValue().Set(DBX_NULL());
+         goto Previous_EOD;
       }
       else {
          int len, dsort, dtype;
@@ -817,10 +810,20 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
          }
          args.GetReturnValue().Set(obj);
       }
-      dbx_request_memory_free(pcon, pmeth, 0);
-      return;
+      goto Previous_OK;
    }
+
+Previous_OK:
    dbx_request_memory_free(pcon, pmeth, 0);
+   return;
+
+Previous_EOD:
+   args.GetReturnValue().Set(DBX_NULL());
+   dbx_request_memory_free(pcon, pmeth, 0);
+   if (cx->pcursor) {
+      ((DBC *) cx->pcursor)->close((DBC *) cx->pcursor);
+      cx->pcursor = NULL;
+   }
    return;
 }
 
@@ -928,6 +931,7 @@ void mcursor::Close(const FunctionCallbackInfo<Value>& args)
 
    if (cx->pcursor) {
       ((DBC *) cx->pcursor)->close((DBC *) cx->pcursor);
+      cx->pcursor = NULL;
    }
 
 /*

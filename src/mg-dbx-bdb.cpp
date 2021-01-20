@@ -39,6 +39,9 @@ Version 1.0.3 17 January 2021:
    Extend the logging of request transmission data to include the corresponding response data.
    - Include 'r' in the log level.  For example: db.setloglevel("MyLog.log", "eftr", "");
    
+Version 1.1.4 20 January 2021:
+   Introduce the ability to specify a BDB environment for the purpose of implementing multi-process concurrent access to a database.
+
 */
 
 
@@ -245,6 +248,7 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    c->pcon->utf8 = 1; /* seems to be faster with UTF8 on! */
    c->pcon->db_library[0] = '\0';
    c->pcon->db_file[0] = '\0';
+   c->pcon->env_dir[0] = '\0';
    c->pcon->key_type = 0;
    c->pcon->use_mutex = 1;
    c->pcon->p_bdb_so = NULL;
@@ -761,6 +765,10 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
       else if (!strcmp(name, (char *) "db_file")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
          DBX_WRITE_UTF8(value, pcon->db_file);
+      }
+      else if (!strcmp(name, (char *) "env_dir")) {
+         value = DBX_TO_STRING(DBX_GET(obj, key));
+         DBX_WRITE_UTF8(value, pcon->env_dir);
       }
       else if (!strcmp(name, (char *) "key_type")) {
          value = DBX_TO_STRING(DBX_GET(obj ,key));
@@ -3373,6 +3381,12 @@ int bdb_load_library(DBXCON *pcon)
       sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_bdb_so->dbname, pcon->p_bdb_so->libnam, fun);
       goto bdb_load_library_exit;
    }
+   sprintf(fun, "%s_env_create", pcon->p_bdb_so->funprfx);
+   pcon->p_bdb_so->p_db_env_create = (int (*) (DB_ENV **, u_int32_t)) dbx_dso_sym(pcon->p_bdb_so->p_library, (char *) fun);
+   if (!pcon->p_bdb_so->p_db_env_create) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_bdb_so->dbname, pcon->p_bdb_so->libnam, fun);
+      goto bdb_load_library_exit;
+   }
    sprintf(fun, "%s_full_version", pcon->p_bdb_so->funprfx);
    pcon->p_bdb_so->p_db_full_version = (char * (*) (int *, int *, int *, int *, int *)) dbx_dso_sym(pcon->p_bdb_so->p_library, (char *) fun);
    if (!pcon->p_bdb_so->p_db_full_version) {
@@ -3399,7 +3413,8 @@ bdb_load_library_exit:
 int bdb_open(DBXMETH *pmeth)
 {
    int rc, result;
-   u_int32_t flags; /* database open flags */
+   u_int32_t db_flags; /* database open flags */
+   u_int32_t env_flags; /* database environment flags */
    char *pver;
    DBXCON *pcon = pmeth->pcon;
 
@@ -3412,6 +3427,8 @@ int bdb_open(DBXMETH *pmeth)
          return result;
       }
       memset((void *) pcon->p_bdb_so, 0, sizeof(DBXBDBSO));
+      pcon->p_bdb_so->dbp = NULL;
+      pcon->p_bdb_so->envp = NULL;
       pcon->p_bdb_so->loaded = 0;
       pcon->p_bdb_so->no_connections = 0;
       pcon->p_bdb_so->multiple_connections = 0;
@@ -3452,22 +3469,43 @@ int bdb_open(DBXMETH *pmeth)
       rc = CACHE_FAILURE;
    }
 
-   rc = pcon->p_bdb_so->p_db_create(&(pcon->p_bdb_so->dbp), NULL, 0);
+   /* v1.1.4 */
+   pcon->p_bdb_so->envp = NULL;
+   if (pcon->env_dir[0]) {
+      rc = pcon->p_bdb_so->p_db_env_create(&(pcon->p_bdb_so->envp), 0);
+      if (rc != 0) {
+         /* Error handling goes here */
+         strcpy(pcon->error, "Cannot create a BDB environment object");
+         goto bdb_open_exit;
+      }
 
+      /* Open the environment. */
+      env_flags = DB_CREATE | DB_INIT_CDB| DB_INIT_MPOOL; /* Initialize the in-memory cache. */
+
+      rc = pcon->p_bdb_so->envp->open(pcon->p_bdb_so->envp, pcon->env_dir, env_flags, 0);
+      if (rc != 0) {
+         /* Error handling goes here */
+         strcpy(pcon->error, "Cannot create or open a BDB environment");
+         goto bdb_open_exit;
+      }
+   }
+
+   rc = pcon->p_bdb_so->p_db_create(&(pcon->p_bdb_so->dbp), pcon->p_bdb_so->envp, 0);
    if (rc != 0) {
       /* Error handling goes here */
       strcpy(pcon->error, "Cannot create a BDB object");
       goto bdb_open_exit;
    }
+
    /* Database open flags */
-   flags = DB_CREATE; /* If the database does not exist, create it.*/
+   db_flags = DB_CREATE; /* If the database does not exist, create it.*/
    /* open the database */
    rc = pcon->p_bdb_so->dbp->open(pcon->p_bdb_so->dbp, /* DB structure pointer */
       NULL, /* Transaction pointer */
       pcon->db_file, /* On-disk file that holds the database. */
       NULL, /* Optional logical database name */
       DB_BTREE, /* Database access method */
-      flags, /* Open flags */
+      db_flags, /* Open flags */
       0); /* File mode (using defaults) */
    if (rc != 0) {
       /* Error handling goes here */
@@ -4272,6 +4310,12 @@ __try {
       data.data = (void *) pmeth->output_val.svalue.buf_addr;
       data.ulen = (u_int32_t)  pmeth->output_val.svalue.len_alloc;
 
+/* v1.1.4
+      {
+         int rc1;
+         rc1 = pcon->p_bdb_so->dbp->sync(pcon->p_bdb_so->dbp, 0);
+      }
+*/
       rc = pcon->p_bdb_so->dbp->get(pcon->p_bdb_so->dbp, NULL, &key, &data, 0);
       pmeth->output_val.svalue.len_used = data.size;
 
@@ -4359,6 +4403,14 @@ __try {
       data.size = (u_int32_t) pmeth->key.args[ndata].svalue.len_used;
 
       rc = pcon->p_bdb_so->dbp->put(pcon->p_bdb_so->dbp, NULL, &key, &data, 0);
+
+/* v1.1.4
+      {
+         int rc1;
+         rc1 = pcon->p_bdb_so->dbp->sync(pcon->p_bdb_so->dbp, 0);
+      }
+*/
+
 /*
       if (rc == DB_KEYEXIST) {
          printf("\r\nPut failed because key %d already exists", rc);

@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "1"
-#define DBX_VERSION_MINOR        "0"
-#define DBX_VERSION_BUILD        "3"
+#define DBX_VERSION_MINOR        "1"
+#define DBX_VERSION_BUILD        "4"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -748,7 +748,9 @@ typedef struct tagDBXBDBSO {
    DBXPLIB           p_library;
    DBXZV             zv;
    DB *              dbp; /* DB structure handle */
+   DB_ENV *          envp; /* DB environment handle */
 
+   int               (* p_db_env_create)        (DB_ENV **envp, u_int32_t flags);
    int               (* p_db_create)            (DB **dbp, DB_ENV *dbenv, u_int32_t flags);
    char *            (* p_db_full_version)      (int *family, int *release, int *major, int *minor, int *patch);
 
@@ -763,6 +765,7 @@ typedef struct tagDBXCON {
    char           type[64];
    char           db_library[256];
    char           db_file[256];
+   char           env_dir[256];
    char           username[64];
    char           password[64];
    char           nspace[64];
