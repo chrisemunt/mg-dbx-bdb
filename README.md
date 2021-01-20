@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to Berkeley DB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>
-17 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+20 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * The M database emulation mode is an experimental project at this stage.
 * The Berkeley DB mode should be stable.
@@ -121,7 +121,12 @@ And optionally (as required):
 
 ### Open a connection to the database
 
-In the following examples, modify all paths (and any user names and passwords) to match those of your own installation.
+To open a BDB database, the database file is specified in **open()** property **db\_file**.  This will allow single-process access to the database.  In order to open a BDB database for concurrent access through multiple processes the BDB environment directory should be specified in **open()** property **env\_dir**.  In summary:
+
+* Single process access: specify **db\_file**.
+* Multi-process concurrent access: specify **db\_file** and **env\_dir**.
+
+In the following examples, modify all paths to match those of your own installation.
 
 #### UNIX
 
@@ -131,6 +136,7 @@ Assuming BDB is installed under **/usr/local/BerkeleyDB.18.1/lib/**
                type: "BDB",
                db_library: "/usr/local/BerkeleyDB.18.1/lib/libdb.so",
                db_file: "/opt/bdb/my_bdb_database.db",
+               env_dir: "/opt/bdb",
                key_type: "int"});
              });
 
@@ -145,6 +151,7 @@ Assuming BDB is installed under **c:/bdb/**
                type: "BDB",
                db_library: "c:/c/bdb/libdb181.dll",
                db_file: "c:/c/bdb/my_bdb_database.db",
+               env_dir: "c:/c/bdb",
                key_type: "int"});
              });
 
@@ -768,5 +775,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 * Extend the logging of request transmission data to include the corresponding response data.
 	* Include 'r' in the log level.  For example: db.setloglevel("MyLog.log", "eftr", "");
 
+### v1.1.4 (20 January 2021)
 
+* Introduce the ability to specify a BDB environment for the purpose of implementing multi-process concurrent access to a database.
 
