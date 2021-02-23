@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to Berkeley DB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>
-20 January 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+23 February 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * The M database emulation mode is an experimental project at this stage.
 * The Berkeley DB mode should be stable.
@@ -779,3 +779,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Introduce the ability to specify a BDB environment for the purpose of implementing multi-process concurrent access to a database.
 
+### v1.1.5 (23 February 2021)
+
+* Correct a fault that resulted in a crash when loading the **mg-dbx-bdb** module in Node.js v10.
+	* This change only affects **mg-dbx-bdb** for Node.js v10.
