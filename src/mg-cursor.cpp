@@ -55,14 +55,14 @@ void mcursor::Init(Handle<Object> exports)
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
    tpl->SetClassName(String::NewFromUtf8(isolate, "mcursor", NewStringType::kNormal).ToLocalChecked());
-   tpl->InstanceTemplate()->SetInternalFieldCount(3); /* 2.0.14 */
+   tpl->InstanceTemplate()->SetInternalFieldCount(3);
 #else
    Isolate* isolate = Isolate::GetCurrent();
 
    /* Prepare constructor template */
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
    tpl->SetClassName(String::NewFromUtf8(isolate, "mcursor"));
-   tpl->InstanceTemplate()->SetInternalFieldCount(1);
+   tpl->InstanceTemplate()->SetInternalFieldCount(3); /* v1.1.5 */
 #endif
 
    /* Prototypes */

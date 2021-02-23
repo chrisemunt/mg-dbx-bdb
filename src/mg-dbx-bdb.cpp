@@ -42,6 +42,9 @@ Version 1.0.3 17 January 2021:
 Version 1.1.4 20 January 2021:
    Introduce the ability to specify a BDB environment for the purpose of implementing multi-process concurrent access to a database.
 
+Version 1.1.5 23 February 2021:
+   Correct a fault that resulted in a crash when loading the **mg-dbx** module in Node.js v10.
+
 */
 
 
@@ -152,7 +155,7 @@ void DBX_DBNAME::Init(Handle<Object> exports)
    Isolate* isolate = Isolate::GetCurrent();
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
-   tpl->InstanceTemplate()->SetInternalFieldCount(1);
+   tpl->InstanceTemplate()->SetInternalFieldCount(3); /* v1.1.5 */
    tpl->SetClassName(String::NewFromUtf8(isolate, DBX_DBNAME_STR));
 #endif
 
