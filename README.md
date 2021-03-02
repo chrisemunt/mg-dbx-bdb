@@ -1,12 +1,12 @@
 # mg-dbx-bdb
 
-High speed Synchronous and Asynchronous access to Berkeley DB from Node.js.
+High speed Synchronous and Asynchronous access to Berkeley DB and LMDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>
 23 February 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * The M database emulation mode is an experimental project at this stage.
-* The Berkeley DB mode should be stable.
+* The Berkeley DB and LMDB mode should be stable.
 * Verified to work with Node.js v14 to v15.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
@@ -16,7 +16,7 @@ Contents
 * [Pre-requisites](#PreReq") 
 * [Installing mg-dbx-bdb](#Install)
 * [Connecting to the database](#Connect)
-* [Invocation of database functions (Berkeley DB mode)](#DBFunctionsBDB)
+* [Invocation of database functions (Berkeley DB and LMDB mode)](#DBFunctionsBDB)
 * [Invocation of database functions (M emulation mode)](#DBFunctionsM)
 * [Working with binary data](#Binary)
 * [Using Node.js/V8 worker threads](#Threads)
@@ -27,7 +27,7 @@ Contents
 
 More will be written about the aims and rationale for this project in due course.  In the meantime, what follows in this section is a brief description of the functionality provided by this Node.js add-on module.
 
-There are two parts to this project.  Firstly, simple synchronous and asynchronous access to Berkeley DB B-Tree storage using either integer or string based keys and, secondly, a Berkeley DB based emulation of the M database storage model.
+There are two parts to this project.  Firstly, simple synchronous and asynchronous access to Berkeley DB and/or LMDB B-Tree storage using either integer or string based keys.  Secondly, an emulation of the M database storage model is layered on top of these two B-Tree storage solutions.
 
 ### Berkeley DB Mode
 
@@ -119,7 +119,7 @@ And optionally (as required):
        var db = new dbxbdb();
 
 
-### Open a connection to the database
+### Open a connection to the database (Berkeley DB)
 
 To open a BDB database, the database file is specified in **open()** property **db\_file**.  This will allow single-process access to the database.  In order to open a BDB database for concurrent access through multiple processes the BDB environment directory should be specified in **open()** property **env\_dir**.  In summary:
 
@@ -142,23 +142,55 @@ Assuming BDB is installed under **/usr/local/BerkeleyDB.18.1/lib/**
 
 * **key\_type** can be **int** (integer), **str** (string) or **m** (multidimensional M database emulation).
 
-
 #### Windows
 
 Assuming BDB is installed under **c:/bdb/**
 
            var open = db.open({
                type: "BDB",
-               db_library: "c:/c/bdb/libdb181.dll",
-               db_file: "c:/c/bdb/my_bdb_database.db",
-               env_dir: "c:/c/bdb",
+               db_library: "c:/bdb/libdb181.dll",
+               db_file: "c:/bdb/my_bdb_database.db",
+               env_dir: "c:/bdb",
                key_type: "int"});
              });
 
 * **key\_type** can be **int** (integer), **str** (string) or **m** (multidimensional M database emulation).
 
 
-#### Additional (optional) properties for the open() method
+### Open a connection to the database (LMDB)
+
+To open a LMDB database for concurrent access, the database environment is specified in **open()** property **env\_dir**.  The database (and associated files) will be created in this directory.
+
+In the following examples, modify all paths to match those of your own installation.
+
+#### UNIX
+
+Assuming LMDB is installed in the usual location: **/usr/lib/liblmdb.so**
+
+           var open = db.open({
+               type: "LMDB",
+               db_library: "liblmdb.so",
+               env_dir: "/opt/lmdb",
+               key_type: "int"});
+             });
+
+* **key\_type** can be **int** (integer), **str** (string) or **m** (multidimensional M database emulation).
+
+#### Windows
+
+Assuming the LMDB DLL is installed as: **c:/LMDBWindows/lib/LMDBWindowsDll64.dll**
+
+           var open = db.open({
+               type: "LMDB",
+               db_library: "c:/LMDBWindows/lib/LMDBWindowsDll64.dll",
+               env_dir: "c:/lmdb",
+               key_type: "int"});
+             });
+
+* **key\_type** can be **int** (integer), **str** (string) or **m** (multidimensional M database emulation).
+
+
+### Additional (optional) properties for the open() method
 
 * **multithreaded**: A boolean value to be set to 'true' or 'false' (default **multithreaded: false**).  Set this property to 'true' if the application uses multithreaded techniques in JavaScript (e.g. V8 worker threads).
 
@@ -783,3 +815,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Correct a fault that resulted in a crash when loading the **mg-dbx-bdb** module in Node.js v10.
 	* This change only affects **mg-dbx-bdb** for Node.js v10.
+
+### v1.2.6 (2 March 2021)
+
+* Add support for Lightning Memory-Mapped Database (LMDB).
