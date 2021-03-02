@@ -6,13 +6,21 @@ var bdb = require('mg-dbx-bdb').dbxbdb;
 var mcursor = require('mg-dbx-bdb').mcursor;
 var db = new bdb();
 
+var lmdb = process.argv[2];
+
 // Modify the parameters in the open() method to suit your installation
 
 if (process.platform == 'win32') {
-   var open = db.open({type: "BDB", db_library: "c:/c/bdb/libdb181.dll", db_file: "c:/bdb/integer.db", key_type: "int"});
+   if (lmdb == 1)
+      var open = db.open({type: "LMDB", db_library: "c:/LMDBWindows/lib/LMDBWindowsDll64.dll", env_dir: "c:/bdb/integer", key_type: "int"});
+   else
+      var open = db.open({type: "BDB", db_library: "c:/c/bdb/libdb181.dll", db_file: "c:/bdb/integer.db", key_type: "int"});
 }
 else {
-   var open = db.open({type: "BDB", db_library: "/usr/local/BerkeleyDB.18.1/lib/libdb.so", db_file: "/opt/bdb/integer.db", key_type: "int"});
+   if (lmdb == 1)
+      var open = db.open({type: "LMDB", db_library: "liblmdb.so", env_dir: "/opt/bdb/integer", key_type: "int"});
+   else
+      var open = db.open({type: "BDB", db_library: "/usr/local/BerkeleyDB.18.1/lib/libdb.so", db_file: "/opt/bdb/integer.db", key_type: "int"});
 }
 
 console.log("Version: " + db.version());
