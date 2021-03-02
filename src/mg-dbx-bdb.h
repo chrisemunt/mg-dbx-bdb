@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "1"
-#define DBX_VERSION_MINOR        "1"
-#define DBX_VERSION_BUILD        "5"
+#define DBX_VERSION_MINOR        "2"
+#define DBX_VERSION_BUILD        "6"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -136,6 +136,8 @@ DISABLE_WCAST_FUNCTION_TYPE
 #if defined(_WIN32)
 
 #include "db_windows.h" /* bdb */
+#define LMDBWINDOWSDLL_API __declspec(dllexport)
+#include "lmdb-dll.h" /* lmdb */
 
 #else
 
@@ -158,6 +160,20 @@ DISABLE_WCAST_FUNCTION_TYPE
 #else
 #include "db_unix.h" /* bdb */
 #endif
+#endif
+
+#if defined __has_include
+#if __has_include(<lmdb.h>)
+#include <lmdb.h>
+#define DBX_LMDB_HEADER_INCLUDED 1
+#elif __has_include("lmdb.h")
+#include "lmdb.h"
+#define DBX_LMDB_HEADER_INCLUDED 1
+#endif
+#endif
+
+#if !defined(DBX_LMDB_HEADER_INCLUDED)
+#include "lmdb.h" /* lmdb */
 #endif
 
 #endif
@@ -731,6 +747,7 @@ typedef struct tagDBXSQL {
 #define DBX_DBTYPE_CACHE     11
 #define DBX_DBTYPE_IRIS      12
 #define DBX_DBTYPE_BDB        1
+#define DBX_DBTYPE_LMDB       2
 
 #define DBX_KEYTYPE_INT       1
 #define DBX_KEYTYPE_STR       2
@@ -747,14 +764,59 @@ typedef struct tagDBXBDBSO {
    char              dbname[32];
    DBXPLIB           p_library;
    DBXZV             zv;
-   DB *              dbp; /* DB structure handle */
-   DB_ENV *          envp; /* DB environment handle */
+   DB *              pdb; /* DB structure handle */
+   DB_ENV *          penv; /* DB environment handle */
 
-   int               (* p_db_env_create)        (DB_ENV **envp, u_int32_t flags);
-   int               (* p_db_create)            (DB **dbp, DB_ENV *dbenv, u_int32_t flags);
+   int               (* p_db_env_create)        (DB_ENV **penv, u_int32_t flags);
+   int               (* p_db_create)            (DB **pdb, DB_ENV *dbenv, u_int32_t flags);
    char *            (* p_db_full_version)      (int *family, int *release, int *major, int *minor, int *patch);
 
 } DBXBDBSO, *PDBXBDBSO;
+
+
+typedef struct tagDBXLMDBSO {
+   short             loaded;
+   int               no_connections;
+   int               multiple_connections;
+   char              libdir[256];
+   char              libnam[256];
+   char              funprfx[8];
+   char              dbname[32];
+   DBXPLIB           p_library;
+   DBXZV             zv;
+   MDB_dbi           db; /* DB structure handle */
+   MDB_dbi *         pdb; /* DB structure handle */
+   MDB_env *         penv; /* DB environment handle */
+   MDB_txn *         ptxn; /* DB transaction handle */
+   MDB_txn *         ptxnro; /* DB transaction handle - read only */
+
+   int               (* p_mdb_env_create)       (MDB_env **env);
+   int               (* p_mdb_env_open)         (MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode);
+   void              (* p_mdb_env_close)        (MDB_env *env);
+   int               (* p_mdb_env_set_maxdbs)   (MDB_env *env, MDB_dbi dbs);
+
+   int               (* p_mdb_txn_begin)        (MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **txn);
+   int               (* p_mdb_txn_commit)       (MDB_txn *txn);
+   void              (* p_mdb_txn_abort)        (MDB_txn *txn);
+   void              (* p_mdb_txn_reset)        (MDB_txn *txn);
+   void              (* p_mdb_txn_renew)        (MDB_txn *txn);
+
+   int               (* p_mdb_dbi_open)         (MDB_txn *txn, const char *name, unsigned int flags, MDB_dbi *dbi);
+   void              (* p_mdb_dbi_close)        (MDB_env *env, MDB_dbi dbi);
+
+   int               (* p_mdb_put)              (MDB_txn *txn, MDB_dbi dbi, MDB_val *key, MDB_val *data, unsigned int flags);
+   int               (* p_mdb_get)              (MDB_txn *txn, MDB_dbi dbi, MDB_val *key, MDB_val *data);
+   int               (* p_mdb_del)              (MDB_txn *txn, MDB_dbi dbi, MDB_val *key, MDB_val *data);
+
+   int               (* p_mdb_cursor_open)      (MDB_txn *txn, MDB_dbi dbi, MDB_cursor **cursor);
+   void              (* p_mdb_cursor_close)     (MDB_cursor *cursor);
+   int               (* p_mdb_cursor_renew)     (MDB_txn *txn, MDB_cursor *cursor);
+   int               (* p_mdb_cursor_get)       (MDB_cursor *cursor, MDB_val *key, MDB_val *data, MDB_cursor_op op);
+
+   char *            (* p_mdb_strerror)         (int err);
+   char *            (* p_mdb_version)          (int *major, int *minor, int *patch);
+
+} DBXLMDBSO, *PDBXLMDBSO;
 
 
 typedef struct tagDBXCON {
@@ -777,7 +839,13 @@ typedef struct tagDBXCON {
    DBXZV          *p_zv;
 
    DBXBDBSO       *p_bdb_so;
+   DBXLMDBSO      *p_lmdb_so;
    DBXZV          zv;
+
+   int            tlevel;
+   int            tlevelro;
+   int            tstatus;
+   int            tstatusro;
 
    int            (* p_dbxfun) (struct tagDBXMETH * pmeth);
 
@@ -815,7 +883,8 @@ typedef struct tagDBXMETH {
    DBXCON         *pcon;
    int            error_code;
    char           error[DBX_ERROR_SIZE];
-   DBC            *pcursor;
+   DBC            *pbdbcursor;
+   MDB_cursor     *plmdbcursor;
 } DBXMETH, *PDBXMETH;
 
 
@@ -956,12 +1025,25 @@ int                        dbx_cursor_reset           (const v8::FunctionCallbac
 
 int                        bdb_load_library           (DBXCON *pcon);
 int                        bdb_open                   (DBXMETH *pmeth);
-int                        bdb_parse_zv               (char *zv, DBXZV * p_isc_sv);
+int                        bdb_parse_zv               (char *zv, DBXZV * p_bdb_sv);
 int                        bdb_next                   (DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, int context);
 int                        bdb_previous               (DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, int context);
 int                        bdb_key_compare            (DBT *key1, DBT *key2, int compare_max, short keytype);
 int                        bdb_error_message          (DBXCON *pcon, int error_code);
 int                        bdb_error                  (DBXCON *pcon, int error_code);
+
+int                        lmdb_load_library          (DBXCON *pcon);
+int                        lmdb_open                  (DBXMETH *pmeth);
+int                        lmdb_parse_zv              (char *zv, DBXZV * p_lmdb_sv);
+int                        lmdb_start_ro_transaction  (DBXMETH *pmeth, int context);
+int                        lmdb_commit_ro_transaction (DBXMETH *pmeth, int context);
+int                        lmdb_start_qro_transaction (DBXMETH *pmeth, MDB_txn **ptxn, int context);
+int                        lmdb_commit_qro_transaction(DBXMETH *pmeth, MDB_txn **ptxn, int context);
+int                        lmdb_next                  (DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, int context);
+int                        lmdb_previous              (DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, int context);
+int                        lmdb_key_compare           (MDB_val *key1, MDB_val *key2, int compare_max, short keytype);
+int                        lmdb_error_message         (DBXCON *pcon, int error_code);
+int                        lmdb_error                 (DBXCON *pcon, int error_code);
 
 int                        dbx_version                (DBXMETH *pmeth);
 int                        dbx_open                   (DBXMETH *pmeth);

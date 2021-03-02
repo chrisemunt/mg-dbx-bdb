@@ -372,7 +372,8 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    if (!cx->pcursor) {
       goto Next_EOD;
    }
-   pmeth->pcursor = (DBC *) cx->pcursor;
+   pmeth->pbdbcursor = (DBC *) cx->pcursor;
+   pmeth->plmdbcursor = (MDB_cursor *) cx->pcursor;
 
    if (pcon->key_type == DBX_KEYTYPE_M)
       key_start = 1;
@@ -512,7 +513,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
             args.GetReturnValue().Set(obj);
       }
       else {
-         args.GetReturnValue().Set(DBX_NULL());
+         goto Next_EOD;
       }
       goto Next_OK;
    }
@@ -527,7 +528,7 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       DBX_DB_UNLOCK(n);
 
       if (eod) {
-         args.GetReturnValue().Set(DBX_NULL());
+         goto Next_EOD;
       }
       else {
          key = dbx_new_string8n(isolate, cx->pqr_prev->global_name.buf_addr, cx->pqr_prev->global_name.len_used, pcon->utf8);
@@ -577,12 +578,20 @@ Next_OK:
    return;
 
 Next_EOD:
-   args.GetReturnValue().Set(DBX_NULL());
-   dbx_request_memory_free(pcon, pmeth, 0);
    if (cx->pcursor) {
-      ((DBC *) cx->pcursor)->close((DBC *) cx->pcursor);
+      if (pcon->dbtype == DBX_DBTYPE_BDB) {
+         ((DBC *) cx->pcursor)->close((DBC *) cx->pcursor);
+      }
+      else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+         MDB_txn * ptxnro;
+         ptxnro = (MDB_txn *) cx->ptxnro;
+         pcon->p_lmdb_so->p_mdb_cursor_close((MDB_cursor *) cx->pcursor);
+         lmdb_commit_qro_transaction(pmeth, &ptxnro, 0);
+      }
       cx->pcursor = NULL;
    }
+   args.GetReturnValue().Set(DBX_NULL());
+   dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
 
@@ -611,7 +620,8 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    if (!cx->pcursor) {
       goto Previous_EOD;
    }
-   pmeth->pcursor = (DBC *) cx->pcursor;
+   pmeth->pbdbcursor = (DBC *) cx->pcursor;
+   pmeth->plmdbcursor = (MDB_cursor *) cx->pcursor;
 
    if (pcon->key_type == DBX_KEYTYPE_M)
       key_start = 1;
@@ -818,12 +828,20 @@ Previous_OK:
    return;
 
 Previous_EOD:
-   args.GetReturnValue().Set(DBX_NULL());
-   dbx_request_memory_free(pcon, pmeth, 0);
    if (cx->pcursor) {
-      ((DBC *) cx->pcursor)->close((DBC *) cx->pcursor);
+      if (pcon->dbtype == DBX_DBTYPE_BDB) {
+         ((DBC *) cx->pcursor)->close((DBC *) cx->pcursor);
+      }
+      else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+         MDB_txn * ptxnro;
+         ptxnro = (MDB_txn *) cx->ptxnro;
+         pcon->p_lmdb_so->p_mdb_cursor_close((MDB_cursor *) cx->pcursor);
+         lmdb_commit_qro_transaction(pmeth, &ptxnro, 0);
+      }
       cx->pcursor = NULL;
    }
+   args.GetReturnValue().Set(DBX_NULL());
+   dbx_request_memory_free(pcon, pmeth, 0);
    return;
 }
 
@@ -930,7 +948,15 @@ void mcursor::Close(const FunctionCallbackInfo<Value>& args)
    }
 
    if (cx->pcursor) {
-      ((DBC *) cx->pcursor)->close((DBC *) cx->pcursor);
+      if (pcon->dbtype == DBX_DBTYPE_BDB) {
+         ((DBC *) cx->pcursor)->close((DBC *) cx->pcursor);
+      }
+      else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+         MDB_txn * ptxnro;
+         ptxnro = (MDB_txn *) cx->ptxnro;
+         pcon->p_lmdb_so->p_mdb_cursor_close((MDB_cursor *) cx->pcursor);
+         lmdb_commit_qro_transaction(pmeth, &ptxnro, 0);
+      }
       cx->pcursor = NULL;
    }
 

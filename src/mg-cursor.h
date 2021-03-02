@@ -51,7 +51,7 @@ public:
    DBXSQL         *psql;
    DBX_DBNAME     *c;
    void           *pcursor;
-
+   void           *ptxnro;
 
 #if DBX_NODE_VERSION >= 100000
    static void       Init                    (v8::Local<v8::Object> exports);

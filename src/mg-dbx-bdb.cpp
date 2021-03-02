@@ -45,6 +45,9 @@ Version 1.1.4 20 January 2021:
 Version 1.1.5 23 February 2021:
    Correct a fault that resulted in a crash when loading the **mg-dbx** module in Node.js v10.
 
+Version 1.2.6 2 March 2021:
+   Add support for Lightning Memory-Mapped Database (LMDB).
+
 */
 
 
@@ -86,6 +89,7 @@ struct dbx_pool_task * bottom_task     = NULL;
 DBXCON * pcon_api = NULL;
 
 DBXBDBSO *  p_bdb_so_global = NULL;
+DBXLMDBSO * p_lmdb_so_global = NULL;
 DBXMUTEX    mutex_global;
 
 using namespace node;
@@ -255,6 +259,12 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    c->pcon->key_type = 0;
    c->pcon->use_mutex = 1;
    c->pcon->p_bdb_so = NULL;
+   c->pcon->p_lmdb_so = NULL;
+
+   c->pcon->tlevel = 0;
+   c->pcon->tlevelro = 0;
+   c->pcon->tstatus = 0;
+   c->pcon->tstatusro = 0;
 
    c->pcon->log_errors = 0;
    c->pcon->log_functions = 0;
@@ -760,6 +770,8 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
 
          if (!strcmp(pcon->type, "bdb"))
             pcon->dbtype = DBX_DBTYPE_BDB;
+         else if (!strcmp(pcon->type, "lmdb"))
+            pcon->dbtype = DBX_DBTYPE_LMDB;
       }
       else if (!strcmp(name, (char *) "db_library")) {
          value = DBX_TO_STRING(DBX_GET(obj, key));
@@ -2140,18 +2152,27 @@ void DBX_DBNAME::Sleep(const FunctionCallbackInfo<Value>& args)
 
 void DBX_DBNAME::Dump(const FunctionCallbackInfo<Value>& args)
 {
-   int rc, n, n1, num;
+   int rc, n, n1, num, rkey_size, rdata_size;
    unsigned char chr, chrp;
+   char *rkey, *rdata;
    DBXCON *pcon;
    DBXMETH *pmeth;
    Local<String> result;
    DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
    DBX_GET_ISOLATE;
    c->dbx_count ++;
-   DBT key, data;
-   DBC *pcursor;
+   DBT bdb_key, bdb_data;
+   DBC *bdb_pcursor;
+   MDB_val lmdb_key, lmdb_data;
+   MDB_cursor *lmdb_pcursor;
    char buffer[4096], val[256], hex[16];
 
+   rkey_size = 0;
+   rdata_size = 0;
+   rkey = NULL;
+   rdata = NULL;
+   bdb_pcursor = NULL;
+   lmdb_pcursor = NULL;
    pcon = c->pcon;
    if (pcon->log_functions) {
       LogFunction(c, args, NULL, (char *) DBX_DBNAME_STR "::dump");
@@ -2180,112 +2201,170 @@ void DBX_DBNAME::Dump(const FunctionCallbackInfo<Value>& args)
    }
 
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
-      memset(&key, 0, sizeof(DBT));
-      memset(&data, 0, sizeof(DBT));
-      key.flags = DB_DBT_USERMEM;
-      data.flags = DB_DBT_USERMEM;
+      memset(&bdb_key, 0, sizeof(DBT));
+      memset(&bdb_data, 0, sizeof(DBT));
+      bdb_key.flags = DB_DBT_USERMEM;
+      bdb_data.flags = DB_DBT_USERMEM;
 
-      rc = pcon->p_bdb_so->dbp->cursor(pcon->p_bdb_so->dbp, NULL, &pcursor, 0);
+      rc = pcon->p_bdb_so->pdb->cursor(pcon->p_bdb_so->pdb, NULL, &bdb_pcursor, 0);
 
       if (pcon->key_type == DBX_KEYTYPE_INT) {
          pmeth->output_val.num.int32 = pmeth->key.args[0].num.int32;
-         key.data = &(pmeth->output_val.num.int32);
-         key.size = sizeof(pmeth->output_val.num.int32);
-         key.ulen = sizeof(pmeth->output_val.num.int32);
+         bdb_key.data = &(pmeth->output_val.num.int32);
+         bdb_key.size = sizeof(pmeth->output_val.num.int32);
+         bdb_key.ulen = sizeof(pmeth->output_val.num.int32);
       }
       else if (pcon->key_type == DBX_KEYTYPE_STR) {
          memcpy((void *) pmeth->output_val.svalue.buf_addr, (void *) pmeth->key.args[0].svalue.buf_addr, (size_t) pmeth->key.args[0].svalue.len_used);
          pmeth->output_val.svalue.len_used = pmeth->key.args[0].svalue.len_used;
-         key.data = (void *) pmeth->output_val.svalue.buf_addr;
-         key.size = (u_int32_t) pmeth->output_val.svalue.len_used;
-         key.ulen = (u_int32_t) pmeth->output_val.svalue.len_alloc;
+         bdb_key.data = (void *) pmeth->output_val.svalue.buf_addr;
+         bdb_key.size = (u_int32_t) pmeth->output_val.svalue.len_used;
+         bdb_key.ulen = (u_int32_t) pmeth->output_val.svalue.len_alloc;
       }
       else {
-         key.data = (void *) pmeth->output_val.svalue.buf_addr;
-         key.size = (u_int32_t) pmeth->output_val.svalue.len_used;
-         key.ulen = (u_int32_t) pmeth->output_val.svalue.len_alloc;
+         bdb_key.data = (void *) pmeth->output_val.svalue.buf_addr;
+         bdb_key.size = (u_int32_t) pmeth->output_val.svalue.len_used;
+         bdb_key.ulen = (u_int32_t) pmeth->output_val.svalue.len_alloc;
       }
 
-      data.data = (void *) pmeth->output_key.svalue.buf_addr;
-      data.ulen = (u_int32_t)  pmeth->output_key.svalue.len_alloc;
+      bdb_data.data = (void *) pmeth->output_key.svalue.buf_addr;
+      bdb_data.ulen = (u_int32_t)  pmeth->output_key.svalue.len_alloc;
 
-      rc = pcursor->get(pcursor, &key, &data, DB_FIRST);
+      rc = bdb_pcursor->get(bdb_pcursor, &bdb_key, &bdb_data, DB_FIRST);
+      rkey = (char *) bdb_key.data;
+      rkey_size = (int) bdb_key.size;
+      rdata = (char *) bdb_data.data;
+      rdata_size = (int) bdb_data.size;
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      rc = lmdb_start_ro_transaction(pmeth, 0);
+      rc = pcon->p_lmdb_so->p_mdb_cursor_open(pcon->p_lmdb_so->ptxnro, pcon->p_lmdb_so->db, &lmdb_pcursor);
 
-      while (rc == CACHE_SUCCESS) {
-         pmeth->output_val.svalue.len_used = key.size;
-         pmeth->output_val.svalue.buf_addr[key.size] = '\0';
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         pmeth->output_val.num.int32 = pmeth->key.args[0].num.int32;
+         lmdb_key.mv_data = &(pmeth->output_val.num.int32);
+         lmdb_key.mv_size = sizeof(pmeth->output_val.num.int32);
+      }
+      else if (pcon->key_type == DBX_KEYTYPE_STR) {
+         memcpy((void *) pmeth->output_val.svalue.buf_addr, (void *) pmeth->key.args[0].svalue.buf_addr, (size_t) pmeth->key.args[0].svalue.len_used);
+         pmeth->output_val.svalue.len_used = pmeth->key.args[0].svalue.len_used;
+         lmdb_key.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
+         lmdb_key.mv_size = (size_t) pmeth->output_val.svalue.len_used;
+      }
+      else {
+         lmdb_key.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
+         lmdb_key.mv_size = (size_t) pmeth->output_val.svalue.len_used;
+      }
 
-         pmeth->output_key.svalue.len_used = data.size;
-         pmeth->output_key.svalue.buf_addr[data.size] = '\0';
+      lmdb_data.mv_data = (void *) pmeth->output_key.svalue.buf_addr;
+      lmdb_data.mv_size = (size_t)  pmeth->output_key.svalue.len_alloc;
 
-         chrp = 0;
-         num = 0;
-         n1 = 0;
-         if (pcon->key_type == DBX_KEYTYPE_INT) {
-            sprintf(hex, "%d", (int) pmeth->output_val.num.int32);
-            for (n = 0; hex[n]; n ++) {
-               buffer[n1 ++] = hex[n];
-            }
+      rc = pcon->p_lmdb_so->p_mdb_cursor_get(lmdb_pcursor, &lmdb_key, &lmdb_data, MDB_FIRST);
+      rkey = (char *) lmdb_key.mv_data;
+      rkey_size = (int) lmdb_key.mv_size;
+      rdata = (char *) lmdb_data.mv_data;
+      rdata_size = (int) lmdb_data.mv_size;
+   }
+
+   while (rc == CACHE_SUCCESS) {
+      pmeth->output_val.svalue.len_used = (unsigned int) rkey_size;
+      pmeth->output_val.svalue.buf_addr[rkey_size] = '\0';
+
+      pmeth->output_key.svalue.len_used = (unsigned int) rdata_size;
+      pmeth->output_key.svalue.buf_addr[rdata_size] = '\0';
+
+      chrp = 0;
+      num = 0;
+      n1 = 0;
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         sprintf(hex, "%d", (int) pmeth->output_val.num.int32);
+         for (n = 0; hex[n]; n ++) {
+            buffer[n1 ++] = hex[n];
          }
-         else {
-            for (n = 0; n < (int) key.size; n ++) {
-               chr = (unsigned char) *(((char *) key.data) + n);
-               if (num == 0 && n > 0 && chrp == 0 && (chr == 1 || chr == 2)) {
-                  num = n + 1;
-               }
-               if (chr < 32 || chr > 126 || (num && (n - num) < 8)) {
-                  sprintf(hex, "%02x", chr);
-                  buffer[n1 ++] = '\\';
-                  buffer[n1 ++] = 'x';
-                  buffer[n1 ++] = hex[0];
-                  buffer[n1 ++] = hex[1];
-               }
-               else {
-                  buffer[n1 ++] = *(((char *) key.data) + n);
-               }
-               if (num && (n - num) >= 7) {
-                  num = 0;
-               }
-               chrp = chr;
+      }
+      else {
+         for (n = 0; n < (int) rkey_size; n ++) {
+            chr = (unsigned char) *(((char *) rkey) + n);
+            if (num == 0 && n > 0 && chrp == 0 && (chr == 1 || chr == 2)) {
+               num = n + 1;
             }
-         }
-         buffer[n1 ++] = ' ';
-         buffer[n1 ++] = '=';
-         buffer[n1 ++] = ' ';
-         for (n = 0; n < (int) data.size; n ++) {
-            if ((int) *(((char *) data.data) + n) < 32 || (int) *(((char *) data.data) + n) > 126) {
-               sprintf(hex, "%02x", (unsigned char) *(((char *) data.data) + n));
+            if (chr < 32 || chr > 126 || (num && (n - num) < 8)) {
+               sprintf(hex, "%02x", chr);
                buffer[n1 ++] = '\\';
                buffer[n1 ++] = 'x';
                buffer[n1 ++] = hex[0];
                buffer[n1 ++] = hex[1];
             }
             else {
-               buffer[n1 ++] = *(((char *) data.data) + n);
+               buffer[n1 ++] = *(((char *) rkey) + n);
             }
-         }
-         buffer[n1] = '\0';
-
-         printf("\r\n%s", buffer);
-         if (pcon->key_type == DBX_KEYTYPE_M) {
-            int n, keyn;
-            DBXVAL keys[DBX_MAXARGS];
-            keyn = dbx_split_key(&keys[0], (char *) key.data, (int) key.size);
-            for (n = 0; n < keyn; n ++) {
-               num = keys[n].svalue.len_used;
-               if (keys[n].svalue.len_used > 250)
-                  num = 250;
-               strncpy(val, keys[n].svalue.buf_addr, keys[n].svalue.len_used);
-               val[num] = '\0';
-               if (!n)
-                  printf("   %d:%d:%d:%s", keys[n].csize, keys[n].type, keys[n].svalue.len_used, val);
-               else
-                  printf(", %d:%d:%d:%s", keys[n].csize, keys[n].type, keys[n].svalue.len_used, val);
+            if (num && (n - num) >= 7) {
+               num = 0;
             }
+            chrp = chr;
          }
-         rc = pcursor->get(pcursor, &key, &data, DB_NEXT);
-         pmeth->output_val.svalue.len_used = 0;
       }
+      buffer[n1 ++] = ' ';
+      buffer[n1 ++] = '=';
+      buffer[n1 ++] = ' ';
+      for (n = 0; n < (int) rdata_size; n ++) {
+         if ((int) *(((char *) rdata) + n) < 32 || (int) *(((char *) rdata) + n) > 126) {
+            sprintf(hex, "%02x", (unsigned char) *(((char *) rdata) + n));
+            buffer[n1 ++] = '\\';
+            buffer[n1 ++] = 'x';
+            buffer[n1 ++] = hex[0];
+            buffer[n1 ++] = hex[1];
+         }
+         else {
+            buffer[n1 ++] = *(((char *) rdata) + n);
+         }
+      }
+      buffer[n1] = '\0';
+
+      printf("\r\n%s", buffer);
+      if (pcon->key_type == DBX_KEYTYPE_M) {
+         int n, keyn;
+         DBXVAL keys[DBX_MAXARGS];
+         keyn = dbx_split_key(&keys[0], (char *) rkey, (int) rkey_size);
+         for (n = 0; n < keyn; n ++) {
+            num = keys[n].svalue.len_used;
+            if (keys[n].svalue.len_used > 250)
+               num = 250;
+            strncpy(val, keys[n].svalue.buf_addr, keys[n].svalue.len_used);
+            val[num] = '\0';
+            if (!n)
+               printf("   %d:%d:%d:%s", keys[n].csize, keys[n].type, keys[n].svalue.len_used, val);
+            else
+               printf(", %d:%d:%d:%s", keys[n].csize, keys[n].type, keys[n].svalue.len_used, val);
+         }
+      }
+
+      if (pcon->dbtype == DBX_DBTYPE_BDB) {
+         rc = bdb_pcursor->get(bdb_pcursor, &bdb_key, &bdb_data, DB_NEXT);
+         rkey = (char *) bdb_key.data;
+         rkey_size = (int) bdb_key.size;
+         rdata = (char *) bdb_data.data;
+         rdata_size = (int) bdb_data.size;
+      }
+      else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+         rc = pcon->p_lmdb_so->p_mdb_cursor_get(lmdb_pcursor, &lmdb_key, &lmdb_data, MDB_NEXT);
+         rkey = (char *) lmdb_key.mv_data;
+         rkey_size = (int) lmdb_key.mv_size;
+         if (pcon->key_type == DBX_KEYTYPE_INT) {
+            pmeth->output_val.num.int32 = (int) dbx_get_size((unsigned char *) rkey, 0);
+         }
+         rdata = (char *) lmdb_data.mv_data;
+         rdata_size = (int) lmdb_data.mv_size;
+      }
+      pmeth->output_val.svalue.len_used = 0;
+   }
+ 
+   if (pcon->dbtype == DBX_DBTYPE_BDB) {
+      bdb_pcursor->close(bdb_pcursor);
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      pcon->p_lmdb_so->p_mdb_cursor_close(lmdb_pcursor);
+      lmdb_commit_ro_transaction(pmeth, 0);
    }
 
    if (rc != CACHE_SUCCESS) {
@@ -3078,7 +3157,9 @@ int dbx_cursor_reset(const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolat
    char *p;
    char global_name[256], buffer[256];
    DBXSQL *psql;
-   DBC *pcursor;
+   DBC *pbdbcursor;
+   MDB_cursor *plmdbcursor;
+   MDB_txn * plmdbtxnro;
    v8::Local<v8::Object> obj;
    v8::Local<v8::String> key;
    v8::Local<v8::String> value;
@@ -3096,12 +3177,26 @@ __try {
       return -1;
    }
 
-   if (cx->pcursor) {
-      pcursor = (DBC *) cx->pcursor;
-      pcursor->close(pcursor);
+   if (pcon->dbtype == DBX_DBTYPE_BDB) {
+      if (cx->pcursor) {
+         pbdbcursor = (DBC *) cx->pcursor;
+         pbdbcursor->close(pbdbcursor);
+      }
+      n = pcon->p_bdb_so->pdb->cursor(pcon->p_bdb_so->pdb, NULL, &pbdbcursor, 0);
+      cx->pcursor = (void *) pbdbcursor;
    }
-   n = pcon->p_bdb_so->dbp->cursor(pcon->p_bdb_so->dbp, NULL, &pcursor, 0);
-   cx->pcursor = (void *) pcursor;
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      if (cx->pcursor) {
+         plmdbcursor = (MDB_cursor *) cx->pcursor;
+         plmdbtxnro = (MDB_txn *) cx->ptxnro;
+         pcon->p_lmdb_so->p_mdb_cursor_close(plmdbcursor);
+         lmdb_commit_qro_transaction(pmeth, &(plmdbtxnro), 0);
+      }
+      n = lmdb_start_qro_transaction(pmeth, &(plmdbtxnro), 0);
+      n = pcon->p_lmdb_so->p_mdb_cursor_open(plmdbtxnro, pcon->p_lmdb_so->db, &plmdbcursor);
+      cx->ptxnro = (void *) plmdbtxnro;
+      cx->pcursor = (void *) plmdbcursor;
+   }
 
    obj = DBX_TO_OBJECT(args[argc_offset]);
    key = dbx_new_string8(isolate, (char *) "sql", 1);
@@ -3374,7 +3469,7 @@ int bdb_load_library(DBXCON *pcon)
       goto bdb_load_library_exit;
    }
 /*
-   int               (* p_db_create)                 (DB **dbp, DB_ENV *dbenv, u_int32_t flags);
+   int               (* p_db_create)                 (DB **pdb, DB_ENV *dbenv, u_int32_t flags);
    char *            (* p_db_full_version)           (int *family, int *release, int *major, int *minor, int *patch);
 */
 
@@ -3430,8 +3525,8 @@ int bdb_open(DBXMETH *pmeth)
          return result;
       }
       memset((void *) pcon->p_bdb_so, 0, sizeof(DBXBDBSO));
-      pcon->p_bdb_so->dbp = NULL;
-      pcon->p_bdb_so->envp = NULL;
+      pcon->p_bdb_so->pdb = NULL;
+      pcon->p_bdb_so->penv = NULL;
       pcon->p_bdb_so->loaded = 0;
       pcon->p_bdb_so->no_connections = 0;
       pcon->p_bdb_so->multiple_connections = 0;
@@ -3473,9 +3568,9 @@ int bdb_open(DBXMETH *pmeth)
    }
 
    /* v1.1.4 */
-   pcon->p_bdb_so->envp = NULL;
+   pcon->p_bdb_so->penv = NULL;
    if (pcon->env_dir[0]) {
-      rc = pcon->p_bdb_so->p_db_env_create(&(pcon->p_bdb_so->envp), 0);
+      rc = pcon->p_bdb_so->p_db_env_create(&(pcon->p_bdb_so->penv), 0);
       if (rc != 0) {
          /* Error handling goes here */
          strcpy(pcon->error, "Cannot create a BDB environment object");
@@ -3485,7 +3580,7 @@ int bdb_open(DBXMETH *pmeth)
       /* Open the environment. */
       env_flags = DB_CREATE | DB_INIT_CDB| DB_INIT_MPOOL; /* Initialize the in-memory cache. */
 
-      rc = pcon->p_bdb_so->envp->open(pcon->p_bdb_so->envp, pcon->env_dir, env_flags, 0);
+      rc = pcon->p_bdb_so->penv->open(pcon->p_bdb_so->penv, pcon->env_dir, env_flags, 0);
       if (rc != 0) {
          /* Error handling goes here */
          strcpy(pcon->error, "Cannot create or open a BDB environment");
@@ -3493,7 +3588,7 @@ int bdb_open(DBXMETH *pmeth)
       }
    }
 
-   rc = pcon->p_bdb_so->p_db_create(&(pcon->p_bdb_so->dbp), pcon->p_bdb_so->envp, 0);
+   rc = pcon->p_bdb_so->p_db_create(&(pcon->p_bdb_so->pdb), pcon->p_bdb_so->penv, 0);
    if (rc != 0) {
       /* Error handling goes here */
       strcpy(pcon->error, "Cannot create a BDB object");
@@ -3503,7 +3598,7 @@ int bdb_open(DBXMETH *pmeth)
    /* Database open flags */
    db_flags = DB_CREATE; /* If the database does not exist, create it.*/
    /* open the database */
-   rc = pcon->p_bdb_so->dbp->open(pcon->p_bdb_so->dbp, /* DB structure pointer */
+   rc = pcon->p_bdb_so->pdb->open(pcon->p_bdb_so->pdb, /* DB structure pointer */
       NULL, /* Transaction pointer */
       pcon->db_file, /* On-disk file that holds the database. */
       NULL, /* Optional logical database name */
@@ -3583,10 +3678,10 @@ int bdb_next(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, in
    data.flags = DB_DBT_USERMEM;
 
    if (context == 0) {
-      rc = pcon->p_bdb_so->dbp->cursor(pcon->p_bdb_so->dbp, NULL, &pcursor, 0);
+      rc = pcon->p_bdb_so->pdb->cursor(pcon->p_bdb_so->pdb, NULL, &pcursor, 0);
    }
    else {
-     pcursor = pmeth->pcursor;
+     pcursor = pmeth->pbdbcursor;
    }
 
    if (pcon->key_type == DBX_KEYTYPE_INT) {
@@ -3679,6 +3774,7 @@ int bdb_next(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, in
                   /* current key returned - get next */
                   *(((unsigned char *) key.data) + pkey->args[pkey->argc - 1].csize + 0) = 0x00;
                   *(((unsigned char *) key.data) + pkey->args[pkey->argc - 1].csize + 1) = 0xff;
+
                   key.size = (pkey->args[pkey->argc - 1].csize + 2);
 /*
                   printf("\r\nAdvance Cursor: pkey->argc=%d; key.size=%d", pkey->argc, key.size);
@@ -3710,7 +3806,7 @@ int bdb_next(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, in
          }
       }
    }
-   else {
+   else { /* not mumps */
 /*
       printf("\r\nstarting from ...");
       dbx_dump_key((char *) key.data, (int) key.size);
@@ -3797,10 +3893,10 @@ int bdb_previous(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval
    data.flags = DB_DBT_USERMEM;
 
    if (context == 0) {
-      rc = pcon->p_bdb_so->dbp->cursor(pcon->p_bdb_so->dbp, NULL, &pcursor, 0);
+      rc = pcon->p_bdb_so->pdb->cursor(pcon->p_bdb_so->pdb, NULL, &pcursor, 0);
    }
    else {
-     pcursor = pmeth->pcursor;
+     pcursor = pmeth->pbdbcursor;
    }
 
    if (pcon->key_type == DBX_KEYTYPE_INT) {
@@ -4034,6 +4130,940 @@ int bdb_error(DBXCON *pcon, int error_code)
 }
 
 
+int lmdb_load_library(DBXCON *pcon)
+{
+   int result;
+   char primerr[DBX_ERROR_SIZE];
+   char fun[64];
+
+   strcpy(pcon->p_lmdb_so->libdir, pcon->db_library);
+   strcpy(pcon->p_lmdb_so->funprfx, "mdb");
+   strcpy(pcon->p_lmdb_so->dbname, "LMDB");
+
+   strcpy(pcon->p_lmdb_so->libnam, pcon->p_lmdb_so->libdir);
+
+   pcon->p_lmdb_so->p_library = dbx_dso_load(pcon->p_lmdb_so->libnam);
+   if (!pcon->p_lmdb_so->p_library) {
+      int len1, len2;
+      char *p;
+#if defined(_WIN32)
+      DWORD errorcode;
+      LPVOID lpMsgBuf;
+
+      lpMsgBuf = NULL;
+      errorcode = GetLastError();
+      sprintf(pcon->error, "Error loading %s Library: %s; Error Code : %ld",  pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, errorcode);
+      len2 = (int) strlen(pcon->error);
+      len1 = FormatMessage(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                     NULL,
+                     errorcode,
+                     /* MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), */
+                     MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
+                     (LPTSTR) &lpMsgBuf,
+                     0,
+                     NULL 
+                     );
+      if (lpMsgBuf && len1 > 0 && (DBX_ERROR_SIZE - len2) > 30) {
+         strncpy(primerr, (const char *) lpMsgBuf, DBX_ERROR_SIZE - 1);
+         p = strstr(primerr, "\r\n");
+         if (p)
+            *p = '\0';
+         len1 = (DBX_ERROR_SIZE - (len2 + 10));
+         if (len1 < 1)
+            len1 = 0;
+         primerr[len1] = '\0';
+         p = strstr(primerr, "%1");
+         if (p) {
+            *p = 'I';
+            *(p + 1) = 't';
+         }
+         strcat(pcon->error, " (");
+         strcat(pcon->error, primerr);
+         strcat(pcon->error, ")");
+      }
+      if (lpMsgBuf)
+         LocalFree(lpMsgBuf);
+#else
+      p = (char *) dlerror();
+      sprintf(primerr, "Cannot load %s library: Error Code: %d", pcon->p_lmdb_so->dbname, errno);
+      len2 = strlen(pcon->error);
+      if (p) {
+         strncpy(primerr, p, DBX_ERROR_SIZE - 1);
+         primerr[DBX_ERROR_SIZE - 1] = '\0';
+         len1 = (DBX_ERROR_SIZE - (len2 + 10));
+         if (len1 < 1)
+            len1 = 0;
+         primerr[len1] = '\0';
+         strcat(pcon->error, " (");
+         strcat(pcon->error, primerr);
+         strcat(pcon->error, ")");
+      }
+#endif
+      goto lmdb_load_library_exit;
+   }
+
+   sprintf(fun, "%s_env_create", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_env_create = (int (*) (MDB_env **)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_env_create) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_env_open", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_env_open = (int (*) (MDB_env *, const char *, unsigned int, mdb_mode_t)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_env_open) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_env_close", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_env_close = (void (*) (MDB_env *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_env_close) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_env_set_maxdbs", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_env_set_maxdbs = (int (*) (MDB_env *, MDB_dbi)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_env_set_maxdbs) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+
+   sprintf(fun, "%s_txn_begin", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_txn_begin = (int (*) (MDB_env *, MDB_txn *, unsigned int, MDB_txn **)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_txn_begin) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_txn_commit", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_txn_commit = (int (*) (MDB_txn *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_txn_commit) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_txn_abort", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_txn_abort = (void (*) (MDB_txn *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_txn_abort) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_txn_reset", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_txn_reset = (void (*) (MDB_txn *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_txn_reset) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_txn_renew", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_txn_renew = (void (*) (MDB_txn *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_txn_renew) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+
+   sprintf(fun, "%s_dbi_open", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_dbi_open = (int (*) (MDB_txn *, const char *, unsigned int, MDB_dbi *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_dbi_open) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_dbi_close", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_dbi_close = (void (*) (MDB_env *, MDB_dbi)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_dbi_close) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+
+   sprintf(fun, "%s_put", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_put = (int (*) (MDB_txn *, MDB_dbi, MDB_val *, MDB_val *, unsigned int)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_put) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_get", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_get = (int (*) (MDB_txn *, MDB_dbi, MDB_val *, MDB_val *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_get) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_del", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_del = (int (*) (MDB_txn *, MDB_dbi, MDB_val *, MDB_val *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_del) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+
+   sprintf(fun, "%s_cursor_open", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_cursor_open = (int (*) (MDB_txn *, MDB_dbi, MDB_cursor **)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_cursor_open) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_cursor_close", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_cursor_close = (void (*) (MDB_cursor *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_cursor_close) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_cursor_renew", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_cursor_renew = (int (*) (MDB_txn *, MDB_cursor *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_cursor_renew) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_cursor_get", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_cursor_get = (int (*) (MDB_cursor *, MDB_val *, MDB_val *, MDB_cursor_op)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_cursor_get) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+
+   sprintf(fun, "%s_strerror", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_strerror = (char * (*) (int)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_strerror) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+   sprintf(fun, "%s_version", pcon->p_lmdb_so->funprfx);
+   pcon->p_lmdb_so->p_mdb_version = (char * (*) (int *, int *, int *)) dbx_dso_sym(pcon->p_lmdb_so->p_library, (char *) fun);
+   if (!pcon->p_lmdb_so->p_mdb_version) {
+      sprintf(pcon->error, "Error loading %s library: %s; Cannot locate the following function : %s", pcon->p_lmdb_so->dbname, pcon->p_lmdb_so->libnam, fun);
+      goto lmdb_load_library_exit;
+   }
+
+   pcon->p_lmdb_so->loaded = 1;
+
+lmdb_load_library_exit:
+
+   if (pcon->error[0]) {
+      pcon->p_lmdb_so->loaded = 0;
+      pcon->error_code = 1009;
+      result = CACHE_NOCON;
+
+      return result;
+   }
+
+   return CACHE_SUCCESS;
+}
+
+
+int lmdb_open(DBXMETH *pmeth)
+{
+   int rc, result;
+   char *pver;
+   DBXCON *pcon = pmeth->pcon;
+
+   if (!pcon->p_lmdb_so) {
+      pcon->p_lmdb_so = (DBXLMDBSO *) dbx_malloc(sizeof(DBXLMDBSO), 0);
+      if (!pcon->p_lmdb_so) {
+         T_STRCPY(pcon->error, _dbxso(pcon->error), "No Memory");
+         pcon->error_code = 1009; 
+         result = CACHE_NOCON;
+         return result;
+      }
+      memset((void *) pcon->p_lmdb_so, 0, sizeof(DBXLMDBSO));
+      pcon->p_lmdb_so->pdb = NULL;
+      pcon->p_lmdb_so->penv = NULL;
+      pcon->p_lmdb_so->loaded = 0;
+      pcon->p_lmdb_so->no_connections = 0;
+      pcon->p_lmdb_so->multiple_connections = 0;
+      pcon->p_zv = &(pcon->p_lmdb_so->zv);
+   }
+
+   if (pcon->p_lmdb_so->loaded == 2) {
+      strcpy(pcon->error, "Cannot create multiple connections to the database");
+      pcon->error_code = 1009; 
+      strcpy((char *) pmeth->output_val.svalue.buf_addr, "0");
+      rc = CACHE_NOCON;
+      goto lmdb_open_exit;
+   }
+
+   if (!pcon->p_lmdb_so->loaded) {
+      rc = lmdb_load_library(pcon);
+      if (rc != CACHE_SUCCESS) {
+         goto lmdb_open_exit;
+      }
+   }
+
+   pver = pcon->p_lmdb_so->p_mdb_version(&(pcon->p_zv->majorversion), &(pcon->p_zv->minorversion), &(pcon->p_zv->patch));
+
+   pcon->p_zv->dbtype = (unsigned char) pcon->dbtype;
+/*
+   printf("\r\n pver=%s; pcon->p_zv->majorversion=%d; pcon->p_zv->minorversion=%d; pcon->p_zv->patch=%d;", pver, pcon->p_zv->majorversion, pcon->p_zv->minorversion, pcon->p_zv->patch);
+*/
+   if (pver) {
+      rc = CACHE_SUCCESS;
+      strcpy(pcon->p_zv->db_version, pver);
+      lmdb_parse_zv(pcon->p_zv->db_version, pcon->p_zv);
+      if (pcon->p_zv->dbx_build)
+         sprintf(pcon->p_zv->version, "%d.%d.b%d", pcon->p_zv->majorversion, pcon->p_zv->minorversion, pcon->p_zv->dbx_build);
+      else
+         sprintf(pcon->p_zv->version, "%d.%d", pcon->p_zv->majorversion, pcon->p_zv->minorversion);
+   }
+   else {
+      rc = CACHE_FAILURE;
+   }
+
+   /* v1.1.4 */
+   pcon->p_lmdb_so->penv = NULL;
+   rc = pcon->p_lmdb_so->p_mdb_env_create(&(pcon->p_lmdb_so->penv));
+   if (rc != 0) {
+      /* Error handling goes here */
+      strcpy(pcon->error, "Cannot create a LMDB environment object");
+      goto lmdb_open_exit;
+   }
+
+   if (pcon->db_file[0]) {
+      rc = pcon->p_lmdb_so->p_mdb_env_set_maxdbs(pcon->p_lmdb_so->penv, (MDB_dbi) 16);
+      if (rc != 0) {
+         /* Error handling goes here */
+         strcpy(pcon->error, "Cannot set the maximum number of databases in the LMDB environment");
+         goto lmdb_open_exit;
+      }
+   }
+
+   rc = pcon->p_lmdb_so->p_mdb_env_open(pcon->p_lmdb_so->penv, pcon->env_dir, MDB_NOTLS, 0664);
+   if (rc != 0) {
+      /* Error handling goes here */
+      strcpy(pcon->error, "Cannot create or open a LMDB environment");
+      goto lmdb_open_exit;
+   }
+
+   pcon->p_lmdb_so->ptxnro = NULL; /* read only transaction */
+   rc = pcon->p_lmdb_so->p_mdb_txn_begin(pcon->p_lmdb_so->penv, NULL, 0, &(pcon->p_lmdb_so->ptxn));
+   if (rc != 0) {
+      /* Error handling goes here */
+      strcpy(pcon->error, "Cannot create or open a LMDB transaction");
+      goto lmdb_open_exit;
+   }
+   pcon->tlevel ++;
+
+   pcon->p_lmdb_so->pdb = &(pcon->p_lmdb_so->db);
+   if (pcon->db_file[0]) {
+      rc = pcon->p_lmdb_so->p_mdb_dbi_open(pcon->p_lmdb_so->ptxn, pcon->db_file, MDB_CREATE, pcon->p_lmdb_so->pdb);
+   }
+   else {
+      rc = pcon->p_lmdb_so->p_mdb_dbi_open(pcon->p_lmdb_so->ptxn, NULL, 0, pcon->p_lmdb_so->pdb);
+   }
+   if (rc != 0) {
+      /* Error handling goes here */
+      strcpy(pcon->error, "Cannot create or open a LMDB database");
+      goto lmdb_open_exit;
+   }
+   pcon->p_lmdb_so->p_mdb_txn_commit(pcon->p_lmdb_so->ptxn);
+   pcon->tlevel --;
+
+lmdb_open_exit:
+
+   if (rc == CACHE_SUCCESS) {
+      dbx_create_string(&(pmeth->output_val.svalue), (void *) &rc, DBX_DTYPE_INT);
+   }
+   else {
+      dbx_create_string(&(pmeth->output_val.svalue), (void *) pcon->error, DBX_DTYPE_STR8);
+   }
+
+   return rc;
+}
+
+
+int lmdb_parse_zv(char *zv, DBXZV * p_lmdb_sv)
+{
+   char *p;
+
+   p_lmdb_sv->dbx_build = p_lmdb_sv->patch;
+   p_lmdb_sv->vnumber = 0;
+
+   if (p_lmdb_sv->majorversion == 0 || p_lmdb_sv->minorversion == 0) {
+      p = strstr(zv, "LMDB ");
+      if (p) {
+         p += 5;
+      }
+      else {
+         p = strstr(zv, "version ");
+         if (p) {
+            p += 8;
+         }
+      }
+      if (p) {
+         p_lmdb_sv->majorversion = (int) strtol(p, NULL, 10);
+         p = strstr(p, ".");
+         if (p) {
+            p ++;
+            p_lmdb_sv->minorversion = (int) strtol(p, NULL, 10);
+            p = strstr(p, ".");
+            if (p) {
+               p ++;
+               p_lmdb_sv->dbx_build = (int) strtol(p, NULL, 10);
+            }
+         }
+      }
+   }
+
+   p_lmdb_sv->vnumber = ((p_lmdb_sv->majorversion * 100000) + (p_lmdb_sv->minorversion * 10000) + p_lmdb_sv->dbx_build);
+   
+   return CACHE_SUCCESS;
+}
+
+
+int lmdb_start_ro_transaction(DBXMETH *pmeth, int context)
+{
+   int rc;
+
+   rc = 0;
+   if (pmeth->pcon->tlevelro) {
+      rc = 0;
+   }
+   else {
+      if (pmeth->pcon->tstatusro == 1) {
+         pmeth->pcon->p_lmdb_so->p_mdb_txn_renew(pmeth->pcon->p_lmdb_so->ptxnro);
+         pmeth->pcon->tstatusro = 0;
+      }
+      else {
+         rc = pmeth->pcon->p_lmdb_so->p_mdb_txn_begin(pmeth->pcon->p_lmdb_so->penv, NULL, MDB_RDONLY, &(pmeth->pcon->p_lmdb_so->ptxnro));
+      }
+   }
+   pmeth->pcon->tlevelro ++;
+
+   return rc;
+}
+
+
+int lmdb_commit_ro_transaction(DBXMETH *pmeth, int context)
+{
+   int rc;
+
+   rc = 0;
+
+   if (pmeth->pcon->tlevelro > 1) {
+      rc = 0;
+   }
+   else {
+      /* pmeth->pcon->p_lmdb_so->p_mdb_txn_abort(pmeth->pcon->p_lmdb_so->ptxnro); */
+      pmeth->pcon->p_lmdb_so->p_mdb_txn_reset(pmeth->pcon->p_lmdb_so->ptxnro);
+      pmeth->pcon->tstatusro = 1;
+   }
+   pmeth->pcon->tlevelro --;
+
+   return rc;
+}
+
+
+int lmdb_start_qro_transaction(DBXMETH *pmeth, MDB_txn **ptxn, int context)
+{
+   int rc;
+
+   rc = lmdb_start_ro_transaction(pmeth, context);
+   *ptxn = pmeth->pcon->p_lmdb_so->ptxnro;
+
+   return rc;
+}
+
+
+int lmdb_commit_qro_transaction(DBXMETH *pmeth, MDB_txn **ptxn, int context)
+{
+   int rc;
+
+   rc = lmdb_commit_ro_transaction(pmeth, context);
+
+   return rc;
+}
+
+
+int lmdb_next(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, int context)
+{
+   int rc, n, mkeyn, fixed_comp;
+   DBXCON *pcon = pmeth->pcon;
+   MDB_val key, key0, data;
+   MDB_cursor *pcursor;
+   DBXVAL mkeys[DBX_MAXARGS];
+
+/*
+   printf("\r\n ******* lmdb_next ******* argn=%d; pkeyval->svalue.buf_addr=%p; pkey->ibuffer=%p;\r\n", pkey->argc, pkeyval->svalue.buf_addr, pkey->ibuffer);
+*/
+
+   if (context == 0) {
+      rc = lmdb_start_ro_transaction(pmeth, 0);
+      rc = pcon->p_lmdb_so->p_mdb_cursor_open(pcon->p_lmdb_so->ptxnro, pcon->p_lmdb_so->db, &pcursor);
+   }
+   else {
+     pcursor = pmeth->plmdbcursor;
+   }
+
+   if (pcon->key_type == DBX_KEYTYPE_INT) {
+      key0.mv_data = &(pkey->args[0].num.int32);
+      key0.mv_size = sizeof(pkey->args[0].num.int32);
+      pkeyval->num.int32 = pkey->args[0].num.int32;
+      key.mv_data = &(pkeyval->num.int32);
+      key.mv_size = sizeof(pkeyval->num.int32);
+      if (pkey->args[0].svalue.len_used == 0) {
+         key.mv_size = 0;
+         key0.mv_size = 0;
+      }
+   }
+   else if (pcon->key_type == DBX_KEYTYPE_STR) {
+      key0.mv_data = pkey->args[0].svalue.buf_addr;
+      key0.mv_size = pkey->args[0].svalue.len_used;
+      memcpy((void *) pkeyval->svalue.buf_addr, (void *) pkey->args[0].svalue.buf_addr, (size_t) pkey->args[0].svalue.len_used);
+      pkeyval->svalue.len_used = pkey->args[0].svalue.len_used;
+      key.mv_data = (void *) pkeyval->svalue.buf_addr;
+      key.mv_size = (size_t) pkeyval->svalue.len_used;
+   }
+   else { /* mumps */
+      key0.mv_data = (void *) pkey->ibuffer;
+      key0.mv_size = (size_t) pkey->ibuffer_used;
+      memcpy((void *) pkeyval->svalue.buf_addr, (void *) pkey->ibuffer, (size_t) pkey->ibuffer_used);
+      pkeyval->svalue.len_used = pkey->ibuffer_used;
+      key.mv_data = (void *) pkeyval->svalue.buf_addr;
+      key.mv_size = (size_t) pkeyval->svalue.len_used;
+   }
+
+   data.mv_data = (void *) pdataval->svalue.buf_addr;
+   data.mv_size = (size_t) pdataval->svalue.len_alloc;
+
+   rc = YDB_NODE_END;
+   if (pcon->key_type == DBX_KEYTYPE_M) {
+/*
+      printf("\r\nstarting from ...");
+      dbx_dump_key((char *) key0.mv_data, (int) key0.mv_size);
+*/
+      pkeyval->svalue.len_used = 0;
+      fixed_comp = 0;
+
+      for (n = 0; n < 10; n ++) {
+/*
+         printf("\r\nDB_SET_RANGE (seed): fixed_comp=%d; pkey->argc=%d; key.mv_size=%d", fixed_comp, pkey->argc, (int) key.mv_size);
+         dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+         rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_SET_RANGE);
+/*
+         printf("\r\nDB_SET_RANGE: rc=%d; pkey->argc=%d; key.mv_size=%d", rc, pkey->argc, (int) key.mv_size);
+         dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+         if (rc == CACHE_SUCCESS) {
+            /* reset key.mv_data to memory owned by us */
+            pkeyval->svalue.len_used = (unsigned int) key.mv_size;
+            memcpy((void *) pkeyval->svalue.buf_addr, (void *) key.mv_data, pkeyval->svalue.len_used);
+            key.mv_data = (void *) pkeyval->svalue.buf_addr;
+         }
+         else {
+            rc = YDB_NODE_END;
+            break;
+         }
+         if (*((unsigned char *) key.mv_data) != 0x00) {
+            rc = YDB_NODE_END;
+            break;
+         }
+
+         /* dbx_dump_key((char *) key.mv_data, (int) key.mv_size); */
+
+         if (pkey->argc < 2)
+            fixed_comp = 0;
+         else
+            fixed_comp = lmdb_key_compare(&key, &key0, pkey->args[pkey->argc - 2].csize, pcon->key_type);
+
+         if (!fixed_comp) {
+            mkeyn = dbx_split_key(&mkeys[0], (char *) key.mv_data, (int) key.mv_size);
+/*
+            printf("\r\nNext Record: pkey->argc=%d mkeyn=%d csize=%d; lens=%d:%d %s", pkey->argc, mkeyn, pkey->args[pkey->argc - 1].csize, pkey->args[pkey->argc - 1].svalue.len_used, mkeys[pkey->argc - 1].svalue.len_used, mkeys[pkey->argc - 1].svalue.buf_addr);
+*/
+
+            if (mkeyn != pkey->argc) { /* can't use data as it's under lower subscripts */
+               data.mv_size = 0;
+            }
+
+            if (mkeyn >= pkey->argc) {
+               if (pkey->args[pkey->argc - 1].svalue.len_used == mkeys[pkey->argc - 1].svalue.len_used && !strncmp(pkey->args[pkey->argc - 1].svalue.buf_addr, mkeys[pkey->argc - 1].svalue.buf_addr, pkey->args[pkey->argc - 1].svalue.len_used)) {
+                  /* current key returned - get next */
+                  *(((unsigned char *) key.mv_data) + pkey->args[pkey->argc - 1].csize + 0) = 0x00;
+                  *(((unsigned char *) key.mv_data) + pkey->args[pkey->argc - 1].csize + 1) = 0xff;
+                  key.mv_size = (pkey->args[pkey->argc - 1].csize + 2);
+/*
+                  printf("\r\nAdvance Cursor: pkey->argc=%d; key.mv_size=%d", pkey->argc, key.mv_size);
+                  dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+                  continue;
+               }
+               else {
+                  /* next key found */
+                  if (context == 0) {
+                     dbx_memcpy((void *) pkeyval->svalue.buf_addr, (void *) mkeys[pkey->argc - 1].svalue.buf_addr, (size_t) mkeys[pkey->argc - 1].svalue.len_alloc);
+                     pkeyval->svalue.len_used = mkeys[pkey->argc - 1].svalue.len_alloc;
+                  }
+                  else {
+                     dbx_memcpy((void *) pkey->ibuffer, (void *) key.mv_data, (size_t) mkeys[pkey->argc - 1].csize);
+                     pkey->ibuffer_used = mkeys[pkey->argc - 1].csize;
+                     pkey->argc = dbx_split_key(&(pkey->args[0]), (char *) pkey->ibuffer, (int) pkey->ibuffer_used);
+                     dbx_memcpy((void *) pkeyval->svalue.buf_addr, (void *) pkey->args[pkey->argc - 1].svalue.buf_addr, (size_t) pkey->args[pkey->argc - 1].svalue.len_alloc);
+                     pkeyval->svalue.len_used = pkey->args[pkey->argc - 1].svalue.len_alloc;
+                  }
+                  pdataval->svalue.len_used = (unsigned int) data.mv_size;
+                  memcpy((void *) pdataval->svalue.buf_addr, (void *) data.mv_data, pdataval->svalue.len_used);
+                  break;
+               }
+            }
+         }
+         else {
+            rc = YDB_NODE_END;
+            break;
+         }
+      }
+   }
+   else { /* not mumps */
+/*
+      printf("\r\nstarting from ...");
+      dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+
+      if (key.mv_size == 0) {
+         rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_FIRST);
+
+         if (rc == CACHE_SUCCESS) {
+            pkeyval->svalue.len_used = (unsigned int) key.mv_size;
+            if (pcon->key_type == DBX_KEYTYPE_INT) {
+               pkeyval->num.int32 = dbx_get_size((unsigned char *) key.mv_data, 0);
+            }
+            else {
+               memcpy((void *) pkeyval->svalue.buf_addr, (void *) key.mv_data, pkeyval->svalue.len_used);
+            }
+         }
+         else {
+            pkeyval->svalue.len_used = 0;
+            rc = YDB_NODE_END;
+         }
+      }
+      else {
+         rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_SET_RANGE);
+
+/*
+         printf("\r\nAdvance Cursor (DB_SET_RANGE): rc=%d; key.mv_size=%d", rc, key.mv_size);
+         dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+         if (rc == CACHE_SUCCESS) {
+            pkeyval->svalue.len_used = (unsigned int) key.mv_size;
+            if (!lmdb_key_compare(&key, &key0, 0, pcon->key_type)) {
+               rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_NEXT);
+
+/*
+               printf("\r\nAdvance Cursor (DB_NEXT): rc=%d; key.mv_size=%d", rc, key.mv_size);
+               dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+               if (rc == CACHE_SUCCESS) {
+                  pkeyval->svalue.len_used = (unsigned int) key.mv_size;
+                  if (pcon->key_type == DBX_KEYTYPE_INT) {
+                     pkeyval->num.int32 = dbx_get_size((unsigned char *) key.mv_data, 0);
+                  }
+                  else {
+                     memcpy((void *) pkeyval->svalue.buf_addr, (void *) key.mv_data, pkeyval->svalue.len_used);
+                  }
+               }
+               else {
+                  pkeyval->svalue.len_used = 0;
+                  rc = YDB_NODE_END;
+               }
+            }
+            else {
+               pkeyval->svalue.len_used = (unsigned int) key.mv_size;
+               if (pcon->key_type == DBX_KEYTYPE_INT) {
+                  pkeyval->num.int32 = dbx_get_size((unsigned char *) key.mv_data, 0);
+               }
+               else {
+                  memcpy((void *) pkeyval->svalue.buf_addr, (void *) key.mv_data, pkeyval->svalue.len_used);
+               }
+            }
+         }
+         else {
+            pkeyval->svalue.len_used = 0;
+            rc = YDB_NODE_END;
+         }
+      }
+      if (rc == CACHE_SUCCESS && pcon->key_type == DBX_KEYTYPE_INT) {
+         sprintf(pkeyval->svalue.buf_addr, "%d", pkeyval->num.int32);
+         pkeyval->svalue.len_used = (unsigned int) strlen(pkeyval->svalue.buf_addr);
+         pkeyval->type = DBX_DTYPE_INT;
+      }
+   }
+
+   if (context == 0) {
+      pcon->p_lmdb_so->p_mdb_cursor_close(pcursor);
+      lmdb_commit_ro_transaction(pmeth, 0);
+   }
+
+   if (rc != CACHE_SUCCESS) {
+      pkeyval->svalue.len_used = 0;
+   }
+   if (pkeyval->svalue.len_used == 0) {
+      rc = YDB_NODE_END;
+   }
+
+   return rc;
+}
+
+
+int lmdb_previous(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, int context)
+{
+   int rc, mkeyn, fixed_comp;
+   DBXCON *pcon = pmeth->pcon;
+   MDB_val key, key0, data;
+   MDB_cursor *pcursor;
+   DBXVAL mkeys[DBX_MAXARGS];
+/*
+   printf("\r\n ******* lmdb_previous ******* argn=%d; pkeyval->svalue.buf_addr=%p; pkey->ibuffer=%p; seed_len%d\r\n", pkey->argc, pkeyval->svalue.buf_addr, pkey->ibuffer, pkey->args[pkey->argc - 1].svalue.len_used);
+*/
+
+   if (context == 0) {
+      rc = lmdb_start_ro_transaction(pmeth, 0);
+      rc = pcon->p_lmdb_so->p_mdb_cursor_open(pcon->p_lmdb_so->ptxnro, pcon->p_lmdb_so->db, &pcursor);
+   }
+   else {
+     pcursor = pmeth->plmdbcursor;
+   }
+
+   if (pcon->key_type == DBX_KEYTYPE_INT) {
+      key0.mv_data = &(pkey->args[0].num.int32);
+      key0.mv_size = sizeof(pkey->args[0].num.int32);
+      pkeyval->num.int32 = pkey->args[0].num.int32;
+      key.mv_data = &(pkeyval->num.int32);
+      key.mv_size = sizeof(pkeyval->num.int32);
+      if (pkey->args[0].svalue.len_used == 0) {
+         key.mv_size = 0;
+         key0.mv_size = 0;
+      }
+   }
+   else if (pcon->key_type == DBX_KEYTYPE_STR) {
+      key0.mv_data = pkey->args[0].svalue.buf_addr;
+      key0.mv_size = pkey->args[0].svalue.len_used;
+      memcpy((void *) pkeyval->svalue.buf_addr, (void *) pkey->args[0].svalue.buf_addr, (size_t) pkey->args[0].svalue.len_used);
+      pkeyval->svalue.len_used = pkey->args[0].svalue.len_used;
+      key.mv_data = (void *) pkeyval->svalue.buf_addr;
+      key.mv_size = (size_t) pkeyval->svalue.len_used;
+   }
+   else { /* mumps */
+      key0.mv_data = (void *) pkey->ibuffer;
+      key0.mv_size = (size_t) pkey->ibuffer_used;
+      memcpy((void *) pkeyval->svalue.buf_addr, (void *) pkey->ibuffer, (size_t) pkey->ibuffer_used);
+      pkeyval->svalue.len_used = pkey->ibuffer_used;
+      key.mv_data = (void *) pkeyval->svalue.buf_addr;
+      key.mv_size = (size_t) pkeyval->svalue.len_used;
+   }
+
+   data.mv_data = (void *) pdataval->svalue.buf_addr;
+   data.mv_size = (size_t) pdataval->svalue.len_alloc;
+
+   fixed_comp = 0;
+   rc = YDB_NODE_END;
+   if (pcon->key_type == DBX_KEYTYPE_M) {
+/*
+      printf("\r\n seed ... pkey->ibuffer_used=%d", pkey->ibuffer_used);
+      dbx_dump_key((char *) key0.mv_data, (int) key0.mv_size);
+*/
+      pkeyval->svalue.len_used = 0;
+      if (pkey->argc < 2 && pkey->args[pkey->argc - 1].svalue.len_used == 0) { /* null seed - special case */
+
+         rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_LAST);
+
+/*
+         printf("\r\n DB_LAST rc=%d; argc=%d; key.mv_size=%d", rc, pkey->argc, (int) key.mv_size);
+         dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+      }
+      else {
+
+         if (pkey->args[pkey->argc - 1].svalue.len_used == 0) {
+            *(((unsigned char *) key.mv_data) + pkey->args[pkey->argc - 1].csize - 1) = 0xff;
+         }
+
+         rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_SET_RANGE);
+/*
+         printf("\r\n DB_SET_RANGE rc=%d; argc=%d; key.mv_size=%d", rc, pkey->argc, (int) key.mv_size);
+         dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+         if (rc == CACHE_SUCCESS) {
+            rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_PREV);
+
+            if (pkey->argc < 2)
+               fixed_comp = 0;
+            else
+               fixed_comp = lmdb_key_compare(&key, &key0, pkey->args[pkey->argc - 2].csize, pcon->key_type);
+/*
+            printf("\r\n DB_PREV rc=%d; argc=%d; key.mv_size=%d; fixed_comp=%d;", rc, pkey->argc, (int) key.mv_size, fixed_comp);
+            dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+         }
+      }
+      if (rc == CACHE_SUCCESS && !fixed_comp) {
+         mkeyn = dbx_split_key(&mkeys[0], (char *) key.mv_data, (int) key.mv_size);
+
+         if (context == 0) {
+            dbx_memcpy((void *) pkeyval->svalue.buf_addr,  (void *) mkeys[pmeth->key.argc - 1].svalue.buf_addr,  (size_t) mkeys[pmeth->key.argc - 1].svalue.len_alloc);
+            pkeyval->svalue.len_used = mkeys[pmeth->key.argc - 1].svalue.len_alloc;
+         }
+         else {
+            dbx_memcpy((void *) pkey->ibuffer, (void *) key.mv_data, (size_t) mkeys[pkey->argc - 1].csize);
+            pkey->ibuffer_used = mkeys[pkey->argc - 1].csize;
+            pkey->argc = dbx_split_key(&(pkey->args[0]), (char *) pkey->ibuffer, (int) pkey->ibuffer_used);
+            dbx_memcpy((void *) pkeyval->svalue.buf_addr, (void *) pkey->args[pkey->argc - 1].svalue.buf_addr, (size_t) pkey->args[pkey->argc - 1].svalue.len_alloc);
+            pkeyval->svalue.len_used = pkey->args[pkey->argc - 1].svalue.len_alloc;
+         }
+         pdataval->svalue.len_used = (unsigned int) data.mv_size;
+         memcpy((void *) pdataval->svalue.buf_addr, (void *) data.mv_data, pdataval->svalue.len_used);
+
+         if (mkeyn != pkey->argc) { /* can't use data as it's under lower subscripts */
+            data.mv_size = 0;
+            pdataval->svalue.len_used = (unsigned int) data.mv_size;
+         }
+
+      }
+      else {
+         pkeyval->svalue.len_used = 0;
+         rc = YDB_NODE_END;
+      }
+   }
+   else { /* not mumps */
+      if (key.mv_size == 0) {
+         rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_LAST);
+         if (rc == CACHE_SUCCESS) {
+            pkeyval->svalue.len_used = (unsigned int) key.mv_size;
+            if (pcon->key_type == DBX_KEYTYPE_INT) {
+               pkeyval->num.int32 = dbx_get_size((unsigned char *) key.mv_data, 0);
+            }
+            else {
+               memcpy((void *) pkeyval->svalue.buf_addr, (void *) key.mv_data, pkeyval->svalue.len_used);
+            }
+         }
+         else {
+            pkeyval->svalue.len_used = 0;
+            rc = YDB_NODE_END;
+         }
+      }
+      else {
+         rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_SET_RANGE);
+
+         if (rc == CACHE_SUCCESS) {
+            rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_PREV);
+
+            if (rc == CACHE_SUCCESS) {
+               pkeyval->svalue.len_used = (unsigned int) key.mv_size;
+               if (pcon->key_type == DBX_KEYTYPE_INT) {
+                  pkeyval->num.int32 = dbx_get_size((unsigned char *) key.mv_data, 0);
+               }
+               else {
+                  memcpy((void *) pkeyval->svalue.buf_addr, (void *) key.mv_data, pkeyval->svalue.len_used);
+               }
+            }
+            else {
+               pkeyval->svalue.len_used = 0;
+               rc = YDB_NODE_END;
+            }
+         }
+         else {
+            rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_LAST);
+
+            if (rc == CACHE_SUCCESS) {
+               pkeyval->svalue.len_used = (unsigned int) key.mv_size;
+               if (pcon->key_type == DBX_KEYTYPE_INT) {
+                  pkeyval->num.int32 = dbx_get_size((unsigned char *) key.mv_data, 0);
+               }
+               else {
+                  memcpy((void *) pkeyval->svalue.buf_addr, (void *) key.mv_data, pkeyval->svalue.len_used);
+               }
+            }
+            else {
+               pkeyval->svalue.len_used = 0;
+               rc = YDB_NODE_END;
+            }
+         }
+      }
+      if (rc == CACHE_SUCCESS && pcon->key_type == DBX_KEYTYPE_INT) {
+         sprintf(pkeyval->svalue.buf_addr, "%d", pkeyval->num.int32);
+         pkeyval->svalue.len_used = (unsigned int) strlen(pkeyval->svalue.buf_addr);
+         pkeyval->type = DBX_DTYPE_INT;
+      }
+   }
+
+   if (context == 0) {
+      pcon->p_lmdb_so->p_mdb_cursor_close(pcursor);
+      lmdb_commit_ro_transaction(pmeth, 0);
+   }
+
+   if (rc != CACHE_SUCCESS) {
+      pkeyval->svalue.len_used = 0;
+   }
+
+   return rc;
+}
+
+
+int lmdb_key_compare(MDB_val *key1, MDB_val *key2, int compare_max, short keytype)
+{
+   int n, n1, n2, rc;
+   char *c1, *c2;
+
+   c1 = (char *) key1->mv_data;
+   c2 = (char *) key2->mv_data;
+   if (keytype == DBX_KEYTYPE_M) {
+      if (compare_max > 0) {
+         if (key1->mv_size < (u_int32_t) compare_max || key2->mv_size < (u_int32_t) compare_max) {
+            return -1;
+         }
+         if ((int) key1->mv_size > compare_max && c1[compare_max] != '\0') {
+            return -1;
+         }
+         if ((int) key2->mv_size > compare_max && c2[compare_max] != '\0') {
+            return -1;
+         }
+      }
+      else {
+         if (key1->mv_size == 0) {
+            return -1;
+         }
+         if (key1->mv_size != key2->mv_size) {
+            return -1;
+         }
+         compare_max = (int) key1->mv_size;
+      }
+   }
+   else {
+      if (key1->mv_size == 0) {
+         return -1;
+      }
+      if (key1->mv_size != key2->mv_size) {
+         return -1;
+      }
+
+      if (keytype == DBX_KEYTYPE_INT) {
+         n1 = *((int *) key1->mv_data);
+         n2 = *((int *) key2->mv_data);
+         if (n1 == n2)
+            return 0;
+         else
+            return -1;
+      }
+      compare_max = (int) key1->mv_size;
+   }
+
+   rc = 0;
+   for (n = 0; n < (int) compare_max; n ++) {
+      if (c1[n] != c2[n]) {
+         rc = -1;
+         break;
+      }
+   }
+   return rc;
+}
+
+
+int lmdb_error_message(DBXCON *pcon, int error_code)
+{
+   sprintf(pcon->error, "LMDB error code: %d", error_code);
+   return 0;
+}
+
+
+int lmdb_error(DBXCON *pcon, int error_code)
+{
+   T_STRCPY(pcon->error, _dbxso(pcon->error), "General LMDB Error");
+
+   return 1;
+}
+
+
 int dbx_version(DBXMETH *pmeth)
 {
    char buffer[256];
@@ -4048,6 +5078,8 @@ __try {
    if (pcon->p_zv && pcon->p_zv->version[0]) {
       if (pcon->p_zv->dbtype == DBX_DBTYPE_BDB)
          T_STRCAT((char *) buffer, _dbxso(buffer), "; BerkeleyDB version: ");
+      else if (pcon->p_zv->dbtype == DBX_DBTYPE_LMDB)
+         T_STRCAT((char *) buffer, _dbxso(buffer), "; LMDB version: ");
       T_STRCAT((char *) buffer, _dbxso(buffer), pcon->p_zv->version);
    }
 
@@ -4075,7 +5107,6 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
 }
 #endif
 }
-
 
 int dbx_open(DBXMETH *pmeth)
 {
@@ -4109,11 +5140,25 @@ __try {
       dbx_leave_critical_section((void *) &dbx_async_mutex);
       return rc;
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB && p_lmdb_so_global) {
+      rc = CACHE_SUCCESS;
+      pcon->p_lmdb_so = p_lmdb_so_global;
+      pcon->p_lmdb_so->no_connections ++;
+      pcon->p_lmdb_so->multiple_connections ++;
+      pcon->p_zv = &(p_lmdb_so_global->zv);
+      dbx_leave_critical_section((void *) &dbx_async_mutex);
+      return rc;
+   }
 
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
       rc = bdb_open(pmeth);
       pcon->p_bdb_so->no_connections ++;
       p_bdb_so_global = pcon->p_bdb_so;
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      rc = lmdb_open(pmeth);
+      pcon->p_lmdb_so->no_connections ++;
+      p_lmdb_so_global = pcon->p_lmdb_so;
    }
 
    dbx_pool_thread_init(pcon, 1);
@@ -4173,6 +5218,12 @@ __try {
          no_connections =  pcon->p_bdb_so->no_connections;
       }
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      if (pcon->p_lmdb_so) {
+         pcon->p_lmdb_so->no_connections --;
+         no_connections =  pcon->p_lmdb_so->no_connections;
+      }
+   }
    dbx_leave_critical_section((void *) &dbx_async_mutex);
 
    /* printf("\r\ndbx_close: no_connections=%d\r\n", no_connections); */
@@ -4184,8 +5235,8 @@ __try {
       if (pcon->p_bdb_so && no_connections == 0 && pcon->p_bdb_so->multiple_connections == 0) {
          if (pcon->p_bdb_so->loaded) {
 
-            if (pcon->p_bdb_so->dbp != NULL) {
-               pcon->p_bdb_so->dbp->close(pcon->p_bdb_so->dbp, 0);
+            if (pcon->p_bdb_so->pdb != NULL) {
+               pcon->p_bdb_so->pdb->close(pcon->p_bdb_so->pdb, 0);
             }
 
 /*
@@ -4203,6 +5254,48 @@ __try {
          strcpy(pcon->p_bdb_so->libnam, "");
       }
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+
+      /* printf("\r\ndbx_close: no_connections=%d; pcon->p_lmdb_so->multiple_connections=%d;\r\n", no_connections, pcon->p_lmdb_so->multiple_connections); */
+
+      if (pcon->p_lmdb_so) {
+         if (pcon->tlevel > 0) {
+            pcon->p_lmdb_so->p_mdb_txn_commit(pcon->p_lmdb_so->ptxn);
+            pcon->tlevel = 0;
+         }
+         if (pcon->tlevelro > 0) {
+            pcon->p_lmdb_so->p_mdb_txn_abort(pcon->p_lmdb_so->ptxnro);
+            pcon->tlevelro = 0;
+         }
+      }
+
+      if (pcon->p_lmdb_so && no_connections == 0 && pcon->p_lmdb_so->multiple_connections == 0) {
+         if (pcon->p_lmdb_so->loaded) {
+
+            if (pcon->p_lmdb_so->pdb != NULL) {
+               pcon->p_lmdb_so->p_mdb_dbi_close(pcon->p_lmdb_so->penv, pcon->p_lmdb_so->db);
+            }
+            if (pcon->p_lmdb_so->penv != NULL) {
+               pcon->p_lmdb_so->p_mdb_env_close(pcon->p_lmdb_so->penv);
+            }
+
+
+/*
+            printf("\r\np_lmdb_exit=%d\r\n", rc);
+            dbx_dso_unload(pcon->p_lmdb_so->p_library); 
+*/
+            pcon->p_lmdb_so->p_library = NULL;
+            pcon->p_lmdb_so->loaded = 0;
+         }
+
+         strcpy(pcon->error, "");
+         dbx_create_string(&(pmeth->output_val.svalue), (void *) "1", DBX_DTYPE_STR);
+
+         strcpy(pcon->p_lmdb_so->libdir, "");
+         strcpy(pcon->p_lmdb_so->libnam, "");
+      }
+   }
+
 
    T_STRCPY(pcon->p_zv->version, _dbxso(pcon->p_zv->version), "");
 
@@ -4247,6 +5340,10 @@ __try {
       rc = CACHE_SUCCESS;
       return rc;
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      rc = CACHE_SUCCESS;
+      return rc;
+   }
 
    return rc;
 
@@ -4276,7 +5373,6 @@ int dbx_get(DBXMETH *pmeth)
 {
    int rc;
    DBXCON *pcon = pmeth->pcon;
-   DBT key, data;
 
 #ifdef _WIN32
 __try {
@@ -4292,6 +5388,8 @@ __try {
    }
 
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
+      DBT key, data;
+
       memset(&key, 0, sizeof(DBT));
       memset(&data, 0, sizeof(DBT));
       key.flags = DB_DBT_USERMEM;
@@ -4316,14 +5414,48 @@ __try {
 /* v1.1.4
       {
          int rc1;
-         rc1 = pcon->p_bdb_so->dbp->sync(pcon->p_bdb_so->dbp, 0);
+         rc1 = pcon->p_bdb_so->pdb->sync(pcon->p_bdb_so->pdb, 0);
       }
 */
-      rc = pcon->p_bdb_so->dbp->get(pcon->p_bdb_so->dbp, NULL, &key, &data, 0);
+      rc = pcon->p_bdb_so->pdb->get(pcon->p_bdb_so->pdb, NULL, &key, &data, 0);
       pmeth->output_val.svalue.len_used = data.size;
 
       if (rc == DB_NOTFOUND) {
          rc = CACHE_ERUNDEF;
+      }
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      MDB_val key, data;
+
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         key.mv_data = (void *) &(pmeth->key.args[0].num.int32);
+         key.mv_size = (size_t) sizeof(pmeth->key.args[0].num.int32);
+      }
+      else if (pcon->key_type == DBX_KEYTYPE_STR) {
+         key.mv_data = (void *) pmeth->key.args[0].svalue.buf_addr;
+         key.mv_size = (size_t) pmeth->key.args[0].svalue.len_used;
+      }
+      else { /* mumps */
+         key.mv_data = (void *) pmeth->key.ibuffer;
+         key.mv_size = (size_t) pmeth->key.args[pmeth->key.argc - 1].csize;;
+      }
+
+      data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
+      data.mv_size = (size_t)  pmeth->output_val.svalue.len_alloc;
+
+      rc = lmdb_start_ro_transaction(pmeth, 0);
+      rc = pcon->p_lmdb_so->p_mdb_get(pcon->p_lmdb_so->ptxnro, pcon->p_lmdb_so->db, &key, &data);
+      lmdb_commit_ro_transaction(pmeth, 0);
+
+      if (rc == CACHE_SUCCESS) {
+         pmeth->output_val.svalue.len_used = (unsigned int) data.mv_size;
+         memcpy((void *) pmeth->output_val.svalue.buf_addr, (void *) data.mv_data, data.mv_size);
+      }
+      else {
+         pmeth->output_val.svalue.len_used = 0;
+         if (rc == MDB_NOTFOUND) {
+            rc = CACHE_ERUNDEF;
+         }
       }
    }
 
@@ -4366,7 +5498,6 @@ int dbx_set(DBXMETH *pmeth)
 {
    int rc, ndata;
    DBXCON *pcon = pmeth->pcon;
-   DBT key, data;
 
 #ifdef _WIN32
 __try {
@@ -4382,6 +5513,8 @@ __try {
    }
 
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
+      DBT key, data;
+
       memset(&key, 0, sizeof(DBT));
       memset(&data, 0, sizeof(DBT));
       key.flags = DB_DBT_USERMEM;
@@ -4405,12 +5538,12 @@ __try {
       data.data = (void *) pmeth->key.args[ndata].svalue.buf_addr;
       data.size = (u_int32_t) pmeth->key.args[ndata].svalue.len_used;
 
-      rc = pcon->p_bdb_so->dbp->put(pcon->p_bdb_so->dbp, NULL, &key, &data, 0);
+      rc = pcon->p_bdb_so->pdb->put(pcon->p_bdb_so->pdb, NULL, &key, &data, 0);
 
 /* v1.1.4
       {
          int rc1;
-         rc1 = pcon->p_bdb_so->dbp->sync(pcon->p_bdb_so->dbp, 0);
+         rc1 = pcon->p_bdb_so->pdb->sync(pcon->p_bdb_so->pdb, 0);
       }
 */
 
@@ -4420,6 +5553,40 @@ __try {
       }
 */
 
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      MDB_val key, data;
+
+      ndata = 1;
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         key.mv_data = (void *) &(pmeth->key.args[0].num.int32);
+         key.mv_size = (size_t) sizeof(pmeth->key.args[0].num.int32);
+      }
+      else if (pcon->key_type == DBX_KEYTYPE_STR) {
+         key.mv_data = (void *) pmeth->key.args[0].svalue.buf_addr;
+         key.mv_size = (size_t) pmeth->key.args[0].svalue.len_used;
+      }
+      else { /* mumps */
+         key.mv_data = (void *) pmeth->key.ibuffer;
+         key.mv_size = (size_t) pmeth->key.args[pmeth->key.argc - 2].csize;
+         ndata = pmeth->key.argc - 1;
+      }
+
+      data.mv_data = (void *) pmeth->key.args[ndata].svalue.buf_addr;
+      data.mv_size = (size_t) pmeth->key.args[ndata].svalue.len_used;
+
+      rc = pcon->p_lmdb_so->p_mdb_txn_begin(pcon->p_lmdb_so->penv, NULL, 0, &(pcon->p_lmdb_so->ptxn));
+      if (rc != 0) {
+         strcpy(pcon->error, "Cannot create or open a LMDB transaction for an update operation");
+         dbx_error_message(pmeth, rc, (char *) "dbx_set");
+         goto dbx_set_exit;
+      }
+
+      rc = pcon->p_lmdb_so->p_mdb_put(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, &data, 0);
+      pcon->tlevel ++;
+
+      pcon->p_lmdb_so->p_mdb_txn_commit(pcon->p_lmdb_so->ptxn);
+      pcon->tlevel --;
    }
 
    if (rc == CACHE_SUCCESS) {
@@ -4461,8 +5628,6 @@ int dbx_defined(DBXMETH *pmeth)
 {
    int rc, n;
    DBXCON *pcon = pmeth->pcon;
-   DBT key, key0, data;
-   DBC *pcursor;
 
 #ifdef _WIN32
 __try {
@@ -4478,6 +5643,9 @@ __try {
 
    n = 0;
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
+      DBT key, key0, data;
+      DBC *pcursor;
+
       memset(&key, 0, sizeof(DBT));
       memset(&key0, 0, sizeof(DBT));
       memset(&data, 0, sizeof(DBT));
@@ -4506,7 +5674,7 @@ __try {
       data.data = (void *) pmeth->output_val.svalue.buf_addr;
       data.ulen = (u_int32_t)  pmeth->output_val.svalue.len_alloc;
 
-      rc = pcon->p_bdb_so->dbp->get(pcon->p_bdb_so->dbp, NULL, &key, &data, 0);
+      rc = pcon->p_bdb_so->pdb->get(pcon->p_bdb_so->pdb, NULL, &key, &data, 0);
       pmeth->output_val.svalue.len_used = data.size;
 
       if (rc == DB_NOTFOUND) {
@@ -4518,7 +5686,7 @@ __try {
       }
 
       if (pcon->key_type == DBX_KEYTYPE_M) {
-         rc = pcon->p_bdb_so->dbp->cursor(pcon->p_bdb_so->dbp, NULL, &pcursor, 0);
+         rc = pcon->p_bdb_so->pdb->cursor(pcon->p_bdb_so->pdb, NULL, &pcursor, 0);
          if (rc == CACHE_SUCCESS) {
 /*
             printf("\r\ndbx_defined: n=%d; key.ulen=%d; key.size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", n, (int) key.ulen, (int) key.size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
@@ -4545,6 +5713,105 @@ __try {
       }
       rc = CACHE_SUCCESS;
    }
+/*
+      MDB_val key, data;
+
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         key.mv_data = (void *) &(pmeth->key.args[0].num.int32);
+         key.mv_size = (size_t) sizeof(pmeth->key.args[0].num.int32);
+      }
+      else if (pcon->key_type == DBX_KEYTYPE_STR) {
+         key.mv_data = (void *) pmeth->key.args[0].svalue.buf_addr;
+         key.mv_size = (size_t) pmeth->key.args[0].svalue.len_used;
+      }
+      else {
+         key.mv_data = (void *) pmeth->key.ibuffer;
+         key.mv_size = (size_t) pmeth->key.args[pmeth->key.argc - 1].csize;;
+      }
+
+      data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
+      data.mv_size = (size_t)  pmeth->output_val.svalue.len_alloc;
+
+      rc = pcon->p_lmdb_so->p_mdb_get(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, &data);
+
+      if (rc == CACHE_SUCCESS) {
+         pmeth->output_val.svalue.len_used = (unsigned int) data.mv_size;
+         memcpy((void *) pmeth->output_val.svalue.buf_addr, (void *) data.mv_data, data.mv_size);
+      }
+      else {
+         pmeth->output_val.svalue.len_used = 0;
+         if (rc == MDB_NOTFOUND) {
+            rc = CACHE_ERUNDEF;
+         }
+      }
+
+*/
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      MDB_val key, key0, data;
+      MDB_cursor *pcursor;
+
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         key.mv_data = &(pmeth->key.args[0].num.int32);
+         key.mv_size = sizeof(pmeth->key.args[0].num.int32);
+      }
+      else if (pcon->key_type == DBX_KEYTYPE_STR) {
+         key.mv_data = (void *) pmeth->key.args[0].svalue.buf_addr;
+         key.mv_size = (size_t) pmeth->key.args[0].svalue.len_used;
+      }
+      else { /* mumps */
+         key.mv_data = (void *) pmeth->key.ibuffer;
+         key.mv_size = (size_t) pmeth->key.args[pmeth->key.argc - 1].csize;
+
+         memcpy((void *) pmeth->output_key.svalue.buf_addr, (void *) pmeth->key.ibuffer, (size_t) pmeth->key.args[pmeth->key.argc - 1].csize);
+         key0.mv_data = (void *) pmeth->output_key.svalue.buf_addr;
+         key0.mv_size = (size_t) pmeth->key.args[pmeth->key.argc - 1].csize;
+      }
+
+      data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
+
+      rc = lmdb_start_ro_transaction(pmeth, 0);
+      rc = pcon->p_lmdb_so->p_mdb_get(pcon->p_lmdb_so->ptxnro, pcon->p_lmdb_so->db, &key, &data);
+      pmeth->output_val.svalue.len_used = (unsigned int) data.mv_size;
+
+      if (rc == MDB_NOTFOUND) {
+         rc = CACHE_ERUNDEF;
+         n = 0;
+      }
+      else {
+         n = 1;
+      }
+
+      if (pcon->key_type == DBX_KEYTYPE_M) {
+         rc = pcon->p_lmdb_so->p_mdb_cursor_open(pcon->p_lmdb_so->ptxnro, pcon->p_lmdb_so->db, &pcursor);
+         if (rc == CACHE_SUCCESS) {
+/*
+            printf("\r\ndbx_defined: n=%d; key.mv_size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", n, (int) key.mv_size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
+*/
+            rc =  pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_SET_RANGE);
+
+/*
+            printf("\r\ndbx_defined: DB_SET_RANGE: n=%d; rc=%d key.mv_size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", n, rc, (int) key.mv_size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
+            dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+            if (rc == CACHE_SUCCESS) {
+               if (n && key.mv_size == pmeth->key.args[pmeth->key.argc - 1].csize && !lmdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) { /* current record defined, get next */
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_NEXT);
+/*
+                  printf("\r\ndbx_defined: DB_NEXT: n=%d; rc=%d key.mv_size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", n, rc, (int) key.mv_size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
+                  dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+               }
+               if (rc == CACHE_SUCCESS && key.mv_size > pmeth->key.args[pmeth->key.argc - 1].csize && !lmdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
+                  n += 10;
+               }
+            }
+            pcon->p_lmdb_so->p_mdb_cursor_close(pcursor);
+         }
+      }
+      rc = lmdb_commit_ro_transaction(pmeth, 0);
+      rc = CACHE_SUCCESS;
+   }
+
 
    if (rc == CACHE_SUCCESS || rc == CACHE_ERUNDEF) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
@@ -4632,11 +5899,11 @@ __try {
       data.data = (void *) pmeth->output_val.svalue.buf_addr;
       data.ulen = (u_int32_t)  pmeth->output_val.svalue.len_alloc;
 
-      rc = pcon->p_bdb_so->dbp->del(pcon->p_bdb_so->dbp, NULL, &key, 0);
+      rc = pcon->p_bdb_so->pdb->del(pcon->p_bdb_so->pdb, NULL, &key, 0);
       n = rc;
 
       if (pcon->key_type == DBX_KEYTYPE_M) {
-         rc = pcon->p_bdb_so->dbp->cursor(pcon->p_bdb_so->dbp, NULL, &pcursor, 0);
+         rc = pcon->p_bdb_so->pdb->cursor(pcon->p_bdb_so->pdb, NULL, &pcursor, 0);
          if (rc == CACHE_SUCCESS) {
 /*
             printf("\r\nkey.ulen=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", (int) key.ulen, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
@@ -4649,7 +5916,7 @@ __try {
             if (rc == CACHE_SUCCESS && !bdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
                for (;;) {
                   /* dbx_dump_key((char *) key.data, (int) key.size); */
-                  rc = pcon->p_bdb_so->dbp->del(pcon->p_bdb_so->dbp, NULL, &key, 0);
+                  rc = pcon->p_bdb_so->pdb->del(pcon->p_bdb_so->pdb, NULL, &key, 0);
                   rc = pcursor->get(pcursor, &key, &data, DB_NEXT);
                   if (rc != CACHE_SUCCESS || bdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
                      break;
@@ -4660,6 +5927,72 @@ __try {
          }
          rc = CACHE_SUCCESS;
       }
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      MDB_val key, key0, data;
+      MDB_cursor *pcursor;
+
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         key.mv_data = &(pmeth->key.args[0].num.int32);
+         key.mv_size = sizeof(pmeth->key.args[0].num.int32);
+      }
+      else if (pcon->key_type == DBX_KEYTYPE_STR) {
+         key.mv_data = (void *) pmeth->key.args[0].svalue.buf_addr;
+         key.mv_size = (size_t) pmeth->key.args[0].svalue.len_used;
+      }
+      else { /* mumps */
+         key.mv_data = (void *) pmeth->key.ibuffer;
+         key.mv_size = (size_t) pmeth->key.args[pmeth->key.argc - 1].csize;
+
+         memcpy((void *) pmeth->output_key.svalue.buf_addr, (void *) pmeth->key.ibuffer, (size_t) pmeth->key.args[pmeth->key.argc - 1].csize);
+         key0.mv_data = (void *) pmeth->output_key.svalue.buf_addr;
+         key0.mv_size = (size_t) pmeth->key.args[pmeth->key.argc - 1].csize;
+      }
+
+      data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
+
+      rc = pcon->p_lmdb_so->p_mdb_txn_begin(pcon->p_lmdb_so->penv, NULL, 0, &(pcon->p_lmdb_so->ptxn));
+      if (rc != 0) {
+         strcpy(pcon->error, "Cannot create or open a LMDB transaction for a delete operation");
+         dbx_error_message(pmeth, rc, (char *) "dbx_delete");
+         goto dbx_delete_exit;
+      }
+      pcon->tlevel ++;
+
+      rc = pcon->p_lmdb_so->p_mdb_del(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, NULL);
+      n = rc;
+
+      if (pcon->key_type == DBX_KEYTYPE_M) {
+         rc = pcon->p_lmdb_so->p_mdb_cursor_open(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &pcursor);
+
+         if (rc == CACHE_SUCCESS) {
+/*
+            printf("\r\npmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
+*/
+            rc =  pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_SET_RANGE);
+
+/*
+            printf("\r\nrc=%d key.mv_size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", rc, (int) key.mv_size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
+            dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+            if (rc == CACHE_SUCCESS && !lmdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
+               for (;;) {
+                  /* dbx_dump_key((char *) key.data, (int) key.size); */
+                  rc = pcon->p_lmdb_so->p_mdb_del(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, NULL);
+
+                  rc =  pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_NEXT);
+
+                  if (rc != CACHE_SUCCESS || lmdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
+                     break;
+                  }
+               }
+            }
+            pcon->p_lmdb_so->p_mdb_cursor_close(pcursor);
+         }
+         rc = CACHE_SUCCESS;
+      }
+      rc = pcon->p_lmdb_so->p_mdb_txn_commit(pcon->p_lmdb_so->ptxn);
+      pcon->tlevel --;
    }
 
    if (rc == CACHE_SUCCESS) {
@@ -4717,6 +6050,9 @@ __try {
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
       rc = bdb_next(pmeth, &(pmeth->key), &(pmeth->output_val), &(pmeth->output_key), 0);
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      rc = lmdb_next(pmeth, &(pmeth->key), &(pmeth->output_val), &(pmeth->output_key), 0);
+   }
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbx_next");
@@ -4770,6 +6106,9 @@ __try {
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
       rc = bdb_previous(pmeth, &(pmeth->key), &(pmeth->output_val), &(pmeth->output_key), 0);
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      rc = lmdb_previous(pmeth, &(pmeth->key), &(pmeth->output_val), &(pmeth->output_key), 0);
+   }
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbx_previous");
@@ -4808,7 +6147,6 @@ int dbx_increment(DBXMETH *pmeth)
    int rc;
    double value;
    DBXCON *pcon = pmeth->pcon;
-   DBT key, data;
 
 #ifdef _WIN32
 __try {
@@ -4824,6 +6162,8 @@ __try {
    }
 
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
+      DBT key, data;
+
       memset(&key, 0, sizeof(DBT));
       memset(&data, 0, sizeof(DBT));
       key.flags = DB_DBT_USERMEM;
@@ -4846,7 +6186,7 @@ __try {
       data.ulen = (u_int32_t)  pmeth->output_val.svalue.len_alloc;
       data.size = 0;
 
-      rc = pcon->p_bdb_so->dbp->get(pcon->p_bdb_so->dbp, NULL, &key, &data, 0);
+      rc = pcon->p_bdb_so->pdb->get(pcon->p_bdb_so->pdb, NULL, &key, &data, 0);
       pmeth->output_val.svalue.len_used = data.size;
       pmeth->output_val.svalue.buf_addr[data.size] = '\0';
 
@@ -4858,7 +6198,39 @@ __try {
       data.data = (void *) pmeth->output_val.svalue.buf_addr;
       data.size = (u_int32_t) pmeth->output_val.svalue.len_used;
       data.ulen = (u_int32_t) pmeth->output_val.svalue.len_alloc;
-      rc = pcon->p_bdb_so->dbp->put(pcon->p_bdb_so->dbp, NULL, &key, &data, 0);
+      rc = pcon->p_bdb_so->pdb->put(pcon->p_bdb_so->pdb, NULL, &key, &data, 0);
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      MDB_val key, data;
+
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         key.mv_data = &(pmeth->key.args[0].num.int32);
+         key.mv_size = sizeof(pmeth->key.args[0].num.int32);
+      }
+      else if (pcon->key_type == DBX_KEYTYPE_STR) {
+         key.mv_data = (void *) pmeth->key.args[0].svalue.buf_addr;
+         key.mv_size = (size_t) pmeth->key.args[0].svalue.len_used;
+      }
+      else { /* mumps */
+         key.mv_data = (void *) pmeth->key.ibuffer;
+         key.mv_size = (size_t) pmeth->key.args[pmeth->key.argc - 2].csize;
+      }
+
+      data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
+      data.mv_size = (size_t)  pmeth->output_val.svalue.len_alloc;
+
+      rc = pcon->p_lmdb_so->p_mdb_get(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, &data);
+      pmeth->output_val.svalue.len_used = (unsigned int) data.mv_size;
+      pmeth->output_val.svalue.buf_addr[data.mv_size] = '\0';
+
+      value = (double) strtod(pmeth->output_val.svalue.buf_addr, NULL);
+      value += pmeth->key.args[pmeth->key.argc - 1].num.real;
+      sprintf(pmeth->output_val.svalue.buf_addr, "%g", value);
+      pmeth->output_val.svalue.len_used = (unsigned int) strlen(pmeth->output_val.svalue.buf_addr);
+
+      data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
+      data.mv_size = (size_t) pmeth->output_val.svalue.len_used;
+      rc = pcon->p_lmdb_so->p_mdb_put(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, &data, 0);
    }
 
    if (rc != CACHE_SUCCESS) {
@@ -4940,6 +6312,34 @@ __try {
          rc = CACHE_FAILURE;
       }
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      timeout = -1;
+      if (pmeth->key.args[pmeth->key.argc - 1].svalue.len_used < 16) {
+         strncpy(buffer, pmeth->key.args[pmeth->key.argc - 1].svalue.buf_addr, pmeth->key.args[pmeth->key.argc - 1].svalue.len_used);
+         buffer[pmeth->key.args[pmeth->key.argc - 1].svalue.len_used] = '\0';
+         timeout = (int) strtol(buffer, NULL, 10);
+      }
+      timeout_nsec = 1000000000;
+
+      if (timeout < 0)
+         timeout_nsec *= 3600;
+      else
+         timeout_nsec *= timeout;
+      rc = YDB_OK;
+      if (rc == YDB_OK) {
+         retval = 1;
+         rc = YDB_OK;
+      }
+      else if (rc == YDB_LOCK_TIMEOUT) {
+         retval = 0;
+         rc = YDB_OK;
+      }
+      else {
+         retval = 0;
+         rc = CACHE_FAILURE;
+      }
+   }
+
 
    if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
@@ -5001,6 +6401,14 @@ __try {
       else
          retval = 0;
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      rc = YDB_OK;
+      if (rc == YDB_OK)
+         retval = 1;
+      else
+         retval = 0;
+   }
+
 
    if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &retval, DBX_DTYPE_INT);
@@ -5042,8 +6450,6 @@ int dbx_merge(DBXMETH *pmeth)
    int rc, n, ref1, ref1_csize, ref2_csize;
    unsigned char ref2_fixed[1024];
    DBXCON *pcon = pmeth->pcon;
-   DBT key, key0, key2, data;
-   DBC *pcursor;
 
 #ifdef _WIN32
 __try {
@@ -5066,6 +6472,9 @@ __try {
    ref1 = 0;
    n = 0;
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
+      DBT key, key0, key2, data;
+      DBC *pcursor;
+
       memset(&key, 0, sizeof(DBT));
       memset(&key0, 0, sizeof(DBT));
       memset(&key2, 0, sizeof(DBT));
@@ -5112,30 +6521,32 @@ __try {
       data.ulen = (u_int32_t)  pmeth->output_val.svalue.len_alloc;
 
       if (pcon->key_type == DBX_KEYTYPE_M) {
-         rc = pcon->p_bdb_so->dbp->cursor(pcon->p_bdb_so->dbp, NULL, &pcursor, 0);
+         rc = pcon->p_bdb_so->pdb->cursor(pcon->p_bdb_so->pdb, NULL, &pcursor, 0);
          if (rc == CACHE_SUCCESS) {
 /*
             printf("\r\nkey.ulen=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", (int) key.ulen, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
 */
             rc = pcursor->get(pcursor, &key, &data, DB_SET_RANGE);
-
+/*
             printf("\r\nrc=%d key.size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d; key0.size=%d;", rc, (int) key.size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize, (int) key0.size);
             dbx_dump_key((char *) key.data, (int) key.size);
-
+*/
             if (rc == CACHE_SUCCESS && !bdb_key_compare(&key, &key0, (int) key0.size, pcon->key_type)) {
 /*
             printf("\r\nrc=%d; key0.size=%d; comp=%d", rc, key0.size, bdb_key_compare(&key, &key0, (int) key0.size, pcon->key_type));
 */
                for (;;) {
+/*
                   dbx_dump_key((char *) key.data, (int) key.size);
+*/
                   memcpy((void *) (ref2_fixed + ref2_csize), (void *) ((char *) key.data + ref1_csize), (size_t) (key.size - ref1_csize));
-
+/*
                   dbx_dump_key((char *) ref2_fixed, (int) (ref2_csize + (key.size - ref1_csize)));
-
+*/
                   key2.data = (void *) ref2_fixed;
                   key2.size = (u_int32_t) (ref2_csize + (key.size - ref1_csize));
                   key2.ulen = 1024;
-                  rc = pcon->p_bdb_so->dbp->put(pcon->p_bdb_so->dbp, NULL, &key2, &data, 0);
+                  rc = pcon->p_bdb_so->pdb->put(pcon->p_bdb_so->pdb, NULL, &key2, &data, 0);
 
                   rc = pcursor->get(pcursor, &key, &data, DB_NEXT);
 
@@ -5145,6 +6556,92 @@ __try {
                }
             }
             pcursor->close(pcursor);
+         }
+         rc = CACHE_SUCCESS;
+      }
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      MDB_val key, key0, key2, data;
+      MDB_cursor *pcursor;
+
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         key.mv_data = &(pmeth->key.args[0].num.int32);
+         key.mv_size = sizeof(pmeth->key.args[0].num.int32);
+      }
+      else if (pcon->key_type == DBX_KEYTYPE_STR) {
+         key.mv_data = (void *) pmeth->key.args[0].svalue.buf_addr;
+         key.mv_size = (size_t) pmeth->key.args[0].svalue.len_used;
+      }
+      else { /* mumps */
+         for (n = 1; n < pmeth->jsargc; n ++) {
+            if (pmeth->key.args[n].sort == DBX_DSORT_GLOBAL) {
+               ref1 = n;
+               break;
+            }
+         }
+         ref1_csize = pmeth->key.args[pmeth->jsargc - 1].csize - pmeth->key.args[ref1 - 1].csize;
+         ref2_csize = pmeth->key.args[ref1 - 1].csize;
+
+         key.mv_data = (void *) (pmeth->key.ibuffer + ref2_csize);
+         key.mv_size = (size_t) ref1_csize;
+/*
+         printf("\r\nref2=%d; ref1=%d; key.mv_size=%d; ref1_csize=%d; ref2_csize=%d", ref2, ref1, (int) key.mv_size, ref1_csize, ref2_csize);
+         dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+         memcpy((void *) pmeth->output_key.svalue.buf_addr, (void *) (pmeth->key.ibuffer + ref2_csize), (size_t) ref1_csize);
+         key0.mv_data = (void *) pmeth->output_key.svalue.buf_addr;
+         key0.mv_size = (size_t) ref1_csize;
+
+         memcpy((void *) ref2_fixed, (void *) pmeth->key.ibuffer, (size_t) ref2_csize);
+      }
+
+      data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
+      data.mv_size = (size_t)  pmeth->output_val.svalue.len_alloc;
+/*
+     rc = pcon->p_lmdb_so->p_mdb_cursor_open(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &pcursor);
+         rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_SET_RANGE);
+      rc = pcon->p_lmdb_so->p_mdb_put(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, &data, 0);
+*/
+
+      if (pcon->key_type == DBX_KEYTYPE_M) {
+         rc = pcon->p_lmdb_so->p_mdb_txn_begin(pcon->p_lmdb_so->penv, NULL, 0, &(pcon->p_lmdb_so->ptxn));
+         pcon->tlevel ++;
+         rc = pcon->p_lmdb_so->p_mdb_cursor_open(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &pcursor);
+         if (rc == CACHE_SUCCESS) {
+/*
+            printf("\r\npmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
+*/
+            rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_SET_RANGE);
+/*
+            printf("\r\nrc=%d key.mv_size=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d; key0.size=%d;", rc, (int) key.mv_size, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize, (int) key0.mv_size);
+            dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+            if (rc == CACHE_SUCCESS && !lmdb_key_compare(&key, &key0, (int) key0.mv_size, pcon->key_type)) {
+/*
+            printf("\r\nrc=%d; key0.mv_size=%d; comp=%d", rc, key0.mv_size, lmdb_key_compare(&key, &key0, (int) key0.mv_size, pcon->key_type));
+*/
+               for (;;) {
+/*
+                  dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+                  memcpy((void *) (ref2_fixed + ref2_csize), (void *) ((char *) key.mv_data + ref1_csize), (size_t) (key.mv_size - ref1_csize));
+/*
+                  dbx_dump_key((char *) ref2_fixed, (int) (ref2_csize + (key.mv_size - ref1_csize)));
+*/
+                  key2.mv_data = (void *) ref2_fixed;
+                  key2.mv_size = (size_t) (ref2_csize + (key.mv_size - ref1_csize));
+                  rc = pcon->p_lmdb_so->p_mdb_put(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key2, &data, 0);
+
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pcursor, &key, &data, MDB_NEXT);
+
+                  if (rc != CACHE_SUCCESS || lmdb_key_compare(&key, &key0, (int) key0.mv_size, pcon->key_type)) {
+                     break;
+                  }
+               }
+            }
+            pcon->p_lmdb_so->p_mdb_cursor_close(pcursor);
+            pcon->p_lmdb_so->p_mdb_txn_commit(pcon->p_lmdb_so->ptxn);
+            pcon->tlevel --;
          }
          rc = CACHE_SUCCESS;
       }
@@ -5239,6 +6736,14 @@ __try {
          rc = bdb_previous(pmeth, &(pqr_prev->key), &(pmeth->output_val), &(pqr_prev->data), 1);
       }
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+     if (dir == 1) {
+         rc = lmdb_next(pmeth, &(pqr_prev->key), &(pmeth->output_val), &(pqr_prev->data), 1);
+      }
+      else {
+         rc = lmdb_previous(pmeth, &(pqr_prev->key), &(pmeth->output_val), &(pqr_prev->data), 1);
+      }
+   }
 
    if (rc == CACHE_SUCCESS) {
       strncpy(pqr_prev->global_name.buf_addr, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used);
@@ -5314,6 +6819,14 @@ __try {
          rc = bdb_previous(pmeth, &(pqr_prev->key), &(pmeth->output_val), &(pqr_prev->data), 1);
       }
    }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      if (dir == 1) {
+         rc = lmdb_next(pmeth, &(pqr_prev->key), &(pmeth->output_val), &(pqr_prev->data), 1);
+      }
+      else {
+         rc = lmdb_previous(pmeth, &(pqr_prev->key), &(pmeth->output_val), &(pqr_prev->data), 1);
+      }
+   }
 
    if (rc != CACHE_SUCCESS && rc != YDB_NODE_END) {
       eod = 1;
@@ -5358,7 +6871,6 @@ int dbx_global_query(DBXMETH *pmeth, DBXQR *pqr_next, DBXQR *pqr_prev, short dir
 {
    int rc, n, eod;
    DBXCON *pcon = pmeth->pcon;
-   DBT key, key0, data;
 
 #ifdef _WIN32
 __try {
@@ -5380,6 +6892,8 @@ __try {
    }
 
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
+      DBT key, key0, data;
+
       memset(&key, 0, sizeof(DBT));
       memset(&key0, 0, sizeof(DBT));
       memset(&data, 0, sizeof(DBT));
@@ -5433,9 +6947,9 @@ __try {
             pqr_next->data.svalue.len_used = 0;
             for (n = (*counter); n < ((*counter) + 5); n ++) {
                if (n == 0)
-                  rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_SET_RANGE);
+                  rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_SET_RANGE);
                else
-                  rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_NEXT);
+                  rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_NEXT);
 
                if (rc != CACHE_SUCCESS) {
                   pqr_next->key.args[0].svalue.len_used = 0;
@@ -5460,24 +6974,24 @@ __try {
                }
             }
          }
-         else {
+         else { /* not mumps */
 /*
             printf("\r\ndbx_global_query (forward): counter=%d; key.size=%d; pqr_prev->key.argc=%d", *counter, (int) key.size, pqr_prev->key.argc);
             dbx_dump_key((char *) key.data, (int) key.size);
 */
             if ((*counter) == 0) {
                if (key.size == 0) {
-                  rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_FIRST);
+                  rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_FIRST);
                }
                else {
-                  rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_SET_RANGE);
+                  rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_SET_RANGE);
                   if (rc == CACHE_SUCCESS && !bdb_key_compare(&key, &key0, 0, pcon->key_type)) {
-                     rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_NEXT);
+                     rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_NEXT);
                   }
                }
             }
             else {
-               rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_NEXT);
+               rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_NEXT);
             }
 
             if (rc == CACHE_SUCCESS) {
@@ -5510,13 +7024,13 @@ __try {
                   *(((unsigned char *) key.data) + (key.size + 0)) = 0x00;
                   *(((unsigned char *) key.data) + (key.size + 1)) = 0xff;
                   key.size += 2;
-                  rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_SET_RANGE);
+                  rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_SET_RANGE);
 /*
                   printf("\r\ndbx_global_query (reverse) DB_SET_RANGE: n=%d; counter=%d; fixed_key_len=%d; rc=%d; key.size=%d; pqr_prev->key.argc=%d", n, *counter, *fixed_key_len, rc, (int) key.size, pqr_prev->key.argc);
                   dbx_dump_key((char *) key.data, (int) key.size);
 */
                   if (rc != CACHE_SUCCESS) {
-                     rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_LAST);
+                     rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_LAST);
 /*
                      printf("\r\ndbx_global_query (reverse) DB_LAST: n=%d; counter=%d; fixed_key_len=%d; rc=%d; key.size=%d; pqr_prev->key.argc=%d", n, *counter, *fixed_key_len, rc, (int) key.size, pqr_prev->key.argc);
                      dbx_dump_key((char *) key.data, (int) key.size);
@@ -5524,7 +7038,7 @@ __try {
                   }
                }
                else {
-                  rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_PREV);
+                  rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_PREV);
 /*
                   printf("\r\ndbx_global_query (reverse) DB_PREV: n=%d; counter=%d; fixed_key_len=%d; rc=%d; key.size=%d; pqr_prev->key.argc=%d", n, *counter, *fixed_key_len, rc, (int) key.size, pqr_prev->key.argc);
                   dbx_dump_key((char *) key.data, (int) key.size);
@@ -5560,20 +7074,20 @@ __try {
 */
             if ((*counter) == 0) {
                if (key.size == 0) {
-                  rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_LAST);
+                  rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_LAST);
                }
                else {
-                  rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_SET_RANGE);
+                  rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_SET_RANGE);
                   if (rc == CACHE_SUCCESS) {
-                     rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_PREV);
+                     rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_PREV);
                   }
                   else {
-                     rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_LAST);
+                     rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_LAST);
                   }
                }
             }
             else {
-               rc = pmeth->pcursor->get(pmeth->pcursor, &key, &data, DB_PREV);
+               rc = pmeth->pbdbcursor->get(pmeth->pbdbcursor, &key, &data, DB_PREV);
             }
             if (rc == CACHE_SUCCESS) {
               if (pcon->key_type == DBX_KEYTYPE_STR) {
@@ -5588,6 +7102,228 @@ __try {
                }
                pqr_next->key.argc = 1;
                pqr_next->data.svalue.len_used = (unsigned int) data.size;
+            }
+            else {
+               pqr_next->key.args[0].svalue.len_used = 0;
+            }
+         }
+      }
+
+      if (pqr_next->key.args[0].svalue.len_used == 0) {
+         rc = YDB_NODE_END;
+      }
+      else {
+         (*counter) ++;
+      }
+
+      if (rc == YDB_NODE_END || rc != YDB_OK) {
+         eod = 1;
+         pqr_next->data.svalue.buf_addr[0] = '\0';
+         pqr_next->data.svalue.len_used = 0;
+         pqr_next->key.argc = 0;
+      }
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      MDB_val key, key0, data;
+
+      rc = CACHE_SUCCESS;
+      if (pcon->key_type == DBX_KEYTYPE_INT) {
+         key0.mv_data = &(pqr_prev->key.args[0].num.int32);
+         key0.mv_size = sizeof(pqr_prev->key.args[0].num.int32);
+         pqr_next->key.args[0].num.int32 = pqr_prev->key.args[0].num.int32;
+         key.mv_data = &(pqr_next->key.args[0].num.int32);
+         key.mv_size = sizeof(pqr_next->key.args[0].num.int32);
+      }
+      else if (pcon->key_type == DBX_KEYTYPE_STR) {
+         if ((*counter) == 0) {
+            key0.mv_data = (void *) pqr_prev->key.ibuffer;
+            key0.mv_size = (size_t) pqr_prev->key.ibuffer_used;
+            memcpy((void *) pqr_next->key.ibuffer, (void *) pqr_prev->key.ibuffer, (size_t) pqr_prev->key.ibuffer_used);
+            pqr_next->key.ibuffer_used = pqr_prev->key.ibuffer_used;
+         }
+         key.mv_data = (void *) pqr_next->key.ibuffer;
+         key.mv_size = (size_t) pqr_next->key.ibuffer_used;
+      }
+      else { /* mumps */
+         key0.mv_data = (void *) pqr_prev->key.ibuffer;
+         key0.mv_size = (size_t) pqr_prev->key.ibuffer_used;
+         memcpy((void *) pqr_next->key.ibuffer, (void *) pqr_prev->key.ibuffer, (size_t) pqr_prev->key.ibuffer_used);
+         pqr_next->key.ibuffer_used = pqr_prev->key.ibuffer_used;
+         key.mv_data = (void *) pqr_next->key.ibuffer;
+         key.mv_size = (size_t) pqr_next->key.ibuffer_used;
+      }
+
+      data.mv_data = (void *) pqr_next->data.svalue.buf_addr;
+      data.mv_size = (size_t) pqr_next->data.svalue.len_alloc;
+
+      if (dir == 1) { /* get next */
+
+         if (pcon->key_type == DBX_KEYTYPE_M) {
+            /* dbx_dump_key((char *) key0.mv_data, (int) key0.mv_size); */
+            pqr_next->data.svalue.len_used = 0;
+            for (n = (*counter); n < ((*counter) + 5); n ++) {
+               if (n == 0)
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_SET_RANGE);
+               else
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_NEXT);
+
+               if (rc != CACHE_SUCCESS) {
+                  pqr_next->key.args[0].svalue.len_used = 0;
+                  break;
+               }
+
+               if (!lmdb_key_compare(&key, &key0, *(fixed_key_len), pcon->key_type)) {
+                  if (!lmdb_key_compare(&key, &key0, 0, pcon->key_type)) { /* current key returned - get next */
+                     continue;
+                  }
+                  pqr_next->key.argc = dbx_split_key(&(pqr_next->key.args[0]), (char *) key.mv_data, (int) key.mv_size);
+                  pqr_next->key.ibuffer_used = (unsigned int) key.mv_size;
+                  pqr_next->data.svalue.len_used = (unsigned int) data.mv_size;
+                  memcpy((void *) pqr_next->data.svalue.buf_addr, (void *) data.mv_data, (size_t) pqr_next->data.svalue.len_used);
+                  break;
+               }
+               else {
+                  pqr_next->key.args[0].svalue.len_used = 0;
+                  break;
+               }
+            }
+         }
+         else { /* not mumps */
+/*
+            printf("\r\ndbx_global_query (forward): counter=%d; key.mv_size=%d; pqr_prev->key.argc=%d", *counter, (int) key.mv_size, pqr_prev->key.argc);
+            dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+            if ((*counter) == 0) {
+               if (key.mv_size == 0) {
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_FIRST);
+               }
+               else {
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_SET_RANGE);
+                  if (rc == CACHE_SUCCESS && !lmdb_key_compare(&key, &key0, 0, pcon->key_type)) {
+                     rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_NEXT);
+                  }
+               }
+            }
+            else {
+               rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_NEXT);
+            }
+
+            if (rc == CACHE_SUCCESS) {
+               if (pcon->key_type == DBX_KEYTYPE_STR) {
+                  pqr_next->key.ibuffer_used = (unsigned int) key.mv_size;
+                  pqr_next->key.args[0].svalue.len_used = (unsigned int) key.mv_size;
+                  memcpy((void *) pqr_next->key.ibuffer, (void *) key.mv_data, (size_t) key.mv_size);
+                  pqr_next->key.args[0].svalue.buf_addr = (char *) pqr_next->key.ibuffer;
+               }
+               else {
+                  pqr_next->key.args[0].num.int32 = (int) dbx_get_size((unsigned char *) key.mv_data, 0);
+                  sprintf((char *) pqr_next->key.ibuffer, "%d", pqr_next->key.args[0].num.int32);
+                  pqr_next->key.args[0].svalue.len_used = (unsigned int) strlen((char *) pqr_next->key.ibuffer);
+                  pqr_next->key.args[0].svalue.buf_addr = (char *) pqr_next->key.ibuffer;
+               }
+               pqr_next->key.argc = 1;
+               pqr_next->data.svalue.len_used = (unsigned int) data.mv_size;
+               memcpy((void *) pqr_next->data.svalue.buf_addr, (void *) data.mv_data, (size_t) pqr_next->data.svalue.len_used);
+            }
+            else {
+               pqr_next->key.args[0].svalue.len_used = 0;
+            }
+         }
+      }
+      else { /* get previous */
+         if (pcon->key_type == DBX_KEYTYPE_M) {
+/*
+            dbx_dump_key((char *) key0.data, (int) key0.size);
+*/
+            pqr_next->data.svalue.len_used = 0;
+            for (n = (*counter); n < ((*counter) + 5); n ++) {
+               if (n == 0) {
+                  *(((unsigned char *) key.mv_data) + (key.mv_size + 0)) = 0x00;
+                  *(((unsigned char *) key.mv_data) + (key.mv_size + 1)) = 0xff;
+                  key.mv_size += 2;
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_SET_RANGE);
+
+/*
+                  printf("\r\ndbx_global_query (reverse) DB_SET_RANGE: n=%d; counter=%d; fixed_key_len=%d; rc=%d; key.mv_size=%d; pqr_prev->key.argc=%d", n, *counter, *fixed_key_len, rc, (int) key.mv_size, pqr_prev->key.argc);
+                  dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+                  if (rc != CACHE_SUCCESS) {
+                     rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_LAST);
+/*
+                     printf("\r\ndbx_global_query (reverse) DB_LAST: n=%d; counter=%d; fixed_key_len=%d; rc=%d; key.mv_size=%d; pqr_prev->key.argc=%d", n, *counter, *fixed_key_len, rc, (int) key.mv_size, pqr_prev->key.argc);
+                     dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+                  }
+               }
+               else {
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_PREV);
+/*
+                  printf("\r\ndbx_global_query (reverse) DB_PREV: n=%d; counter=%d; fixed_key_len=%d; rc=%d; key.mv_size=%d; pqr_prev->key.argc=%d", n, *counter, *fixed_key_len, rc, (int) key.mv_size, pqr_prev->key.argc);
+                  dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+               }
+
+               if (rc != CACHE_SUCCESS) {
+                  pqr_next->key.args[0].svalue.len_used = 0;
+                  break;
+               }
+
+               /* dbx_dump_key((char *) key.data, (int) key.size); */
+
+               if (!lmdb_key_compare(&key, &key0, *(fixed_key_len), pcon->key_type)) {
+                  if (!lmdb_key_compare(&key, &key0, 0, pcon->key_type)) { /* current key returned - get previous */
+                     continue;
+                  }
+                  pqr_next->key.argc = dbx_split_key(&(pqr_next->key.args[0]), (char *) key.mv_data, (int) key.mv_size);
+                  pqr_next->key.ibuffer_used = (unsigned int) key.mv_size;
+                  pqr_next->data.svalue.len_used = (unsigned int) data.mv_size;
+                  memcpy((void *) pqr_next->data.svalue.buf_addr, (void *) data.mv_data, (size_t) pqr_next->data.svalue.len_used);
+                  break;
+               }
+               else {
+                  /* printf("\r\nPossibly next global/subscript in the chain"); */
+                  continue;
+               }
+            }
+         }
+         else { /* not mumps */
+/*
+            printf("\r\ndbx_global_query (reverse): counter=%d; key.mv_size=%d; pqr_prev->key.argc=%d", *counter, (int) key.mv_size, pqr_prev->key.argc);
+            dbx_dump_key((char *) key.mv_data, (int) key.mv_size);
+*/
+            if ((*counter) == 0) {
+               if (key.mv_size == 0) {
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_LAST);
+               }
+               else {
+                  rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_SET_RANGE);
+                  if (rc == CACHE_SUCCESS) {
+                     rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_PREV);
+                  }
+                  else {
+                     rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_LAST);
+                  }
+               }
+            }
+            else {
+               rc = pcon->p_lmdb_so->p_mdb_cursor_get(pmeth->plmdbcursor, &key, &data, MDB_PREV);
+            }
+            if (rc == CACHE_SUCCESS) {
+              if (pcon->key_type == DBX_KEYTYPE_STR) {
+                  pqr_next->key.ibuffer_used = (unsigned int) key.mv_size;
+                  pqr_next->key.args[0].svalue.len_used = (unsigned int) key.mv_size;
+                  memcpy((void *) pqr_next->key.ibuffer, (void *) key.mv_data, (size_t) key.mv_size);
+                  pqr_next->key.args[0].svalue.buf_addr = (char *) pqr_next->key.ibuffer;
+               }
+               else {
+                  pqr_next->key.args[0].num.int32 = (int) dbx_get_size((unsigned char *) key.mv_data, 0);
+                  sprintf((char *) pqr_next->key.ibuffer, "%d", pqr_next->key.args[0].num.int32);
+                  pqr_next->key.args[0].svalue.len_used = (unsigned int) strlen((char *) pqr_next->key.ibuffer);
+                  pqr_next->key.args[0].svalue.buf_addr = (char *) pqr_next->key.ibuffer;
+               }
+               pqr_next->key.argc = 1;
+               pqr_next->data.svalue.len_used = (unsigned int) data.mv_size;
+               memcpy((void *) pqr_next->data.svalue.buf_addr, (void *) data.mv_data, (size_t) pqr_next->data.svalue.len_used);
             }
             else {
                pqr_next->key.args[0].svalue.len_used = 0;
@@ -6582,6 +8318,9 @@ int dbx_error_message(DBXMETH *pmeth, int error_code, char *function)
    rc = 0;
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
       rc = bdb_error_message(pcon, error_code);
+   }
+   else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
+      rc = lmdb_error_message(pcon, error_code);
    }
 
    if (pcon->log_errors) {
