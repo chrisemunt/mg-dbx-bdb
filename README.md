@@ -29,9 +29,9 @@ More will be written about the aims and rationale for this project in due course
 
 There are two parts to this project.  Firstly, simple synchronous and asynchronous access to Berkeley DB and/or LMDB B-Tree storage using either integer or string based keys.  Secondly, an emulation of the M database storage model is layered on top of these two B-Tree storage solutions.
 
-### Berkeley DB Mode
+### Berkeley DB and LMDB Mode
 
-In this mode, a Berkeley DB database is created/opened and key-value pairs are added to it.
+In this mode, a Berkeley DB (or LMDB) database is created/opened and key-value pairs are added to it.
 
        database[{keys}]=value
 
@@ -60,7 +60,7 @@ Examples:
        hospital_admission[1, 20201203]="Admission Record for 3 December 2020"
        hospital_admission[1, 20210101]="Admission Record for 1 January 2021"
 
-The above scheme shows a one-to-many relationship between a person and that person's hospital admission records.  All records are held in a single Berkeley DB database.
+The above scheme shows a one-to-many relationship between a person and that person's hospital admission records.  All records are held in a single Berkeley DB (or LMDB) database.
 
 ## <a name="PreReq"></a> Pre-requisites 
 
@@ -226,9 +226,9 @@ Example 2 (Change the current character set):
        db.close();
  
 
-## <a name="DBFunctionsBDB"></a> Invocation of database functions (Berkeley DB mode)
+## <a name="DBFunctionsBDB"></a> Invocation of database functions (Berkeley DB and LMDB mode)
 
-This mode of operation applies to BDB databases opened with a **key\_type** of **int** or **str**. 
+This mode of operation applies to BDB (or LMDB) databases opened with a **key\_type** of **int** or **str**. 
 
 ### Set a record
 
@@ -378,7 +378,7 @@ Example 2 (return all key and data values from the database - returns an object)
 
 ## <a name="DBFunctionsM"></a> Invocation of database functions (M emulation mode)
 
-This mode of operation applies to BDB databases opened with a **key\_type** of **m**. 
+This mode of operation applies to BDB (or LMDB) databases opened with a **key\_type** of **m**. 
 
 ### Register a global name (and fixed key)
 
