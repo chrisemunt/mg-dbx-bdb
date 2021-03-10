@@ -48,6 +48,9 @@ Version 1.1.5 23 February 2021:
 Version 1.2.6 2 March 2021:
    Add support for Lightning Memory-Mapped Database (LMDB).
 
+Version 1.2.7 10 March 2021:
+   Correct a fault that resulted in mglobal.previous() calls erroneously returning empty string - particularly in relation to records at the end of a BDB/LMDB database.
+
 */
 
 
@@ -3969,12 +3972,24 @@ int bdb_previous(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval
          if (rc == CACHE_SUCCESS) {
             rc = pcursor->get(pcursor, &key, &data, DB_PREV);
 
-         if (pkey->argc < 2)
-            fixed_comp = 0;
-         else
-            fixed_comp = bdb_key_compare(&key, &key0, pkey->args[pkey->argc - 2].csize, pcon->key_type);
+            if (pkey->argc < 2)
+               fixed_comp = 0;
+            else
+               fixed_comp = bdb_key_compare(&key, &key0, pkey->args[pkey->argc - 2].csize, pcon->key_type);
 /*
             printf("\r\n DB_PREV rc=%d; argc=%d; key.size=%d; fixed_comp=%d;", rc, pkey->argc, (int) key.size, fixed_comp);
+            dbx_dump_key((char *) key.data, (int) key.size);
+*/
+         }
+         else { /* v1.2.7 */
+            /* printf("\r\n probably the last global in the database ..."); */
+            rc = pcursor->get(pcursor, &key, &data, DB_LAST);
+            if (pkey->argc < 2)
+               fixed_comp = 0;
+            else
+               fixed_comp = bdb_key_compare(&key, &key0, pkey->args[pkey->argc - 2].csize, pcon->key_type);
+/*
+            printf("\r\n DB_LAST rc=%d; argc=%d; key.size=%d; fixed_comp=%d;", rc, pkey->argc, (int) key.size, fixed_comp);
             dbx_dump_key((char *) key.data, (int) key.size);
 */
          }
