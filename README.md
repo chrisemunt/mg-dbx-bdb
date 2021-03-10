@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to Berkeley DB and LMDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>
-10 Match 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+10 March 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * The M database emulation mode is an experimental project at this stage.
 * The Berkeley DB and LMDB mode should be stable.
