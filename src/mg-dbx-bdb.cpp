@@ -51,6 +51,9 @@ Version 1.2.6 2 March 2021:
 Version 1.2.7 10 March 2021:
    Correct a fault that resulted in mglobal.previous() calls erroneously returning empty string - particularly in relation to records at the end of a BDB/LMDB database.
 
+Version 1.2.8 12 April 2021:
+   Correct a fault in the increment() method for LMDB.
+
 */
 
 
@@ -6234,7 +6237,13 @@ __try {
       data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
       data.mv_size = (size_t)  pmeth->output_val.svalue.len_alloc;
 
-      rc = pcon->p_lmdb_so->p_mdb_get(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, &data);
+      rc = lmdb_start_ro_transaction(pmeth, 0); /* v1.2.8 */
+      rc = pcon->p_lmdb_so->p_mdb_get(pcon->p_lmdb_so->ptxnro, pcon->p_lmdb_so->db, &key, &data);
+      lmdb_commit_ro_transaction(pmeth, 0); /* v1.2.8 */
+
+      if (rc == CACHE_SUCCESS) { /* v1.2.8 */
+         memcpy((void *) pmeth->output_val.svalue.buf_addr, (void *) data.mv_data, data.mv_size);
+      }
       pmeth->output_val.svalue.len_used = (unsigned int) data.mv_size;
       pmeth->output_val.svalue.buf_addr[data.mv_size] = '\0';
 
@@ -6245,7 +6254,19 @@ __try {
 
       data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
       data.mv_size = (size_t) pmeth->output_val.svalue.len_used;
+
+      /* v1.2.8 */
+      rc = pcon->p_lmdb_so->p_mdb_txn_begin(pcon->p_lmdb_so->penv, NULL, 0, &(pcon->p_lmdb_so->ptxn));
+      if (rc != 0) {
+         strcpy(pcon->error, "Cannot create or open a LMDB transaction for an update operation");
+         dbx_error_message(pmeth, rc, (char *) "dbx_increment");
+         goto dbx_increment_exit;
+      }
       rc = pcon->p_lmdb_so->p_mdb_put(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, &data, 0);
+      pcon->tlevel ++;
+
+      pcon->p_lmdb_so->p_mdb_txn_commit(pcon->p_lmdb_so->ptxn);
+      pcon->tlevel --;
    }
 
    if (rc != CACHE_SUCCESS) {
