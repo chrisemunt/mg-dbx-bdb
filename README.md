@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to Berkeley DB and LMDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-10 March 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+12 April 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * The M database emulation mode is an experimental project at this stage.
 * The Berkeley DB and LMDB mode should be stable.
@@ -823,3 +823,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.2.7 (10 March 2021)
 
 * Correct a fault that resulted in **mglobal.previous()** calls erroneously returning empty string - particularly in relation to records at the end of a BDB/LMDB database.
+
+### v1.2.8 (12 April 2021)
+
+* Correct a fault in the **increment()** method for LMDB.
