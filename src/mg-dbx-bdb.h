@@ -32,8 +32,8 @@
 #define DBX_NODE_VERSION         (NODE_MAJOR_VERSION * 10000) + (NODE_MINOR_VERSION * 100) + NODE_PATCH_VERSION
 
 #define DBX_VERSION_MAJOR        "1"
-#define DBX_VERSION_MINOR        "2"
-#define DBX_VERSION_BUILD        "8"
+#define DBX_VERSION_MINOR        "3"
+#define DBX_VERSION_BUILD        "9"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -211,7 +211,6 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_DTYPE_NULL           10
 #define DBX_DTYPE_STROBJ         11
 
-
 #define DBX_CMND_OPEN            1
 #define DBX_CMND_CLOSE           2
 #define DBX_CMND_NSGET           3
@@ -238,7 +237,7 @@ DISABLE_WCAST_FUNCTION_TYPE
 #define DBX_CMND_GNAMENEXT       51
 #define DBX_CMND_GNAMEPREVIOUS   52
 
-#define DBX_IBUFFER_OFFSET       15
+#define DBX_DB_SIZE              50000000
 
 #if defined(MAX_PATH) && (MAX_PATH>511)
 #define DBX_MAX_PATH             MAX_PATH
@@ -794,6 +793,8 @@ typedef struct tagDBXLMDBSO {
    int               (* p_mdb_env_open)         (MDB_env *env, const char *path, unsigned int flags, mdb_mode_t mode);
    void              (* p_mdb_env_close)        (MDB_env *env);
    int               (* p_mdb_env_set_maxdbs)   (MDB_env *env, MDB_dbi dbs);
+   int               (* p_mdb_env_set_mapsize)  (MDB_env *env, size_t size);
+   int               (* p_mdb_env_stat)         (MDB_env *env, MDB_stat *stat);
 
    int               (* p_mdb_txn_begin)        (MDB_env *env, MDB_txn *parent, unsigned int flags, MDB_txn **txn);
    int               (* p_mdb_txn_commit)       (MDB_txn *txn);
@@ -827,6 +828,7 @@ typedef struct tagDBXCON {
    char           type[64];
    char           db_library[256];
    char           db_file[256];
+   size_t         db_size;
    char           env_dir[256];
    char           username[64];
    char           password[64];
@@ -861,9 +863,7 @@ typedef struct tagDBXCON {
 
 
 typedef struct tagDBXKEY {
-   unsigned int   ibuffer_size;
-   unsigned int   ibuffer_used;
-   unsigned char *ibuffer;
+   DBXSTR         ibuffer;
    int            argc;
    DBXVAL         args[DBX_MAXARGS];
 } DBXKEY, *PDBXKEY;
@@ -1000,6 +1000,7 @@ private:
 DBXMETH *                  dbx_request_memory         (DBXCON *pcon, short context);
 DBXMETH *                  dbx_request_memory_alloc   (DBXCON *pcon, short context);
 int                        dbx_request_memory_free    (DBXCON *pcon, DBXMETH *pmeth, short context);
+char *                     dbx_buffer_resize          (char **ppbuffer, unsigned int data_size, unsigned int req_size, unsigned int *size);
 
 #if DBX_NODE_VERSION >= 100000
 void                       dbx_set_prototype_method   (v8::Local<v8::FunctionTemplate> t, v8::FunctionCallback callback, const char* name, const char* data);
@@ -1018,7 +1019,9 @@ int                        dbx_is_number              (DBXVAL *pval);
 int                        dbx_set_number             (DBXVAL *pval, unsigned char *px);
 int                        dbx_split_key              (DBXVAL *keys, char * key, int key_len);
 int                        dbx_dump_key               (char * key, int key_len);
-int                        dbx_memcpy                 (void * to, void *from, size_t size);
+int                        dbx_memcpy                 (void * to, void * from, size_t size);
+int                        dbx_memcpy_ex              (DBXSTR * to, void * from, size_t size);
+int                        dbx_memcpy_exx             (DBXSTR * to, void * from, size_t size);
 int                        dbx_cursor_init            (void *pcx);
 int                        dbx_global_reset           (const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolate * isolate, DBXCON *pcon, DBXMETH *pmeth, void *pgx, int argc_offset, short context);
 int                        dbx_cursor_reset           (const v8::FunctionCallbackInfo<v8::Value>& args, v8::Isolate * isolate, DBXCON *pcon, DBXMETH *pmeth, void *pcx, int argc_offset, short context);
@@ -1029,6 +1032,9 @@ int                        bdb_parse_zv               (char *zv, DBXZV * p_bdb_s
 int                        bdb_next                   (DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, int context);
 int                        bdb_previous               (DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, int context);
 int                        bdb_key_compare            (DBT *key1, DBT *key2, int compare_max, short keytype);
+int                        bdb_get                    (DBXCON *pcon, DBT *key, DBT *data, DBXSTR *dbx_data);
+int                        bdb_cursor_get             (DBC *pcursor, DBT *key, DBXSTR *dbx_key, DBT *data, DBXSTR *dbx_data, int context);
+int                        bdb_resize_buffer          (DBT *key, DBXSTR *dbx_key, DBT *data, DBXSTR *dbx_data, int context);
 int                        bdb_error_message          (DBXCON *pcon, int error_code);
 int                        bdb_error                  (DBXCON *pcon, int error_code);
 
