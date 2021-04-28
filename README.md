@@ -3,11 +3,11 @@
 High speed Synchronous and Asynchronous access to Berkeley DB and LMDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-12 April 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+28 April 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * The M database emulation mode is an experimental project at this stage.
 * The Berkeley DB and LMDB mode should be stable.
-* Verified to work with Node.js v14 to v15.
+* Verified to work with Node.js v14 to v16.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 Contents
@@ -191,6 +191,8 @@ Assuming the LMDB DLL is installed as: **c:/LMDBWindows/lib/LMDBWindowsDll64.dll
 
 
 ### Additional (optional) properties for the open() method
+
+* **db\_size**: The maximum size for a LMDB environment/database.  The default maximum database size for LMDB is 10M.  However, for databases created using **mg-dbx-bdb** the default size will be set to 50M and this can be modified using this parameter.
 
 * **multithreaded**: A boolean value to be set to 'true' or 'false' (default **multithreaded: false**).  Set this property to 'true' if the application uses multithreaded techniques in JavaScript (e.g. V8 worker threads).
 
@@ -827,3 +829,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.2.8 (12 April 2021)
 
 * Correct a fault in the **increment()** method for LMDB.
+
+### v1.3.9 (28 April 2021)
+
+* Verify that **mg-dbx-bdb** will build and work with Node.js v16.x.x.
+* Introduce support for large data items.  Previous versions set a limit of 32K for data and key values.  Bear in mind that the default maximum key size for LMDB is 512 Bytes.  This can be modified at LMDB compile time - see the documentation for setting MDB_MAXKEYSIZE.
+* Introduce a parameter (**db\_size**) to the open() method to allow the size of the LMDB environment/database to be set.  The default maximum size for a LMDB database is 10M. 
