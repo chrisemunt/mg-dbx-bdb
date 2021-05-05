@@ -403,12 +403,19 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
       }
 
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_order(pmeth, cx->pqr_prev, 1, cx->getdata, &(cx->counter));
 
+      if (pcon->error_code != CACHE_SUCCESS) {
+         dbx_error_message(pmeth, pcon->error_code, (char *) "mcursor::Next::dbx_global_order");
+         if (pcon->error_mode == 1) { /* v1.3.10 */
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+         }
+      }
+
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (eod) {
          goto Next_EOD;
@@ -441,12 +448,19 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    else if (cx->context == 2) {
    
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_query(pmeth, cx->pqr_next, cx->pqr_prev, 1, cx->getdata, &(cx->fixed_key_len), &(cx->counter));
 
+      if (pcon->error_code != CACHE_SUCCESS) {
+         dbx_error_message(pmeth, pcon->error_code, (char *) "mcursor::Next::dbx_global_query");
+         if (pcon->error_mode == 1) { /* v1.3.10 */
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+         }
+      }
+
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (cx->format == 1) {
          char buffer[32], delim[4];
@@ -520,12 +534,19 @@ void mcursor::Next(const FunctionCallbackInfo<Value>& args)
    else if (cx->context == 9) {
 
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_directory(pmeth, cx->pqr_prev, 1, &(cx->counter));
 
+      if (pcon->error_code != CACHE_SUCCESS) {
+         dbx_error_message(pmeth, pcon->error_code, (char *) "mcursor::Next::dbx_global_directory");
+         if (pcon->error_mode == 1) { /* v1.3.10 */
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+         }
+      }
+
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (eod) {
          goto Next_EOD;
@@ -651,12 +672,19 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
       }
 
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_order(pmeth, cx->pqr_prev, -1, cx->getdata, &(cx->counter));
 
+      if (pcon->error_code != CACHE_SUCCESS) {
+         dbx_error_message(pmeth, pcon->error_code, (char *) "mcursor::Previous::dbx_global_order");
+         if (pcon->error_mode == 1) { /* v1.3.10 */
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+         }
+      }
+
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (eod) {
          args.GetReturnValue().Set(DBX_NULL());
@@ -689,12 +717,19 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    else if (cx->context == 2) {
    
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_query(pmeth, cx->pqr_next, cx->pqr_prev, -1, cx->getdata, &(cx->fixed_key_len), &(cx->counter));
 
+      if (pcon->error_code != CACHE_SUCCESS) {
+         dbx_error_message(pmeth, pcon->error_code, (char *) "mcursor::Previous::dbx_global_query");
+         if (pcon->error_mode == 1) { /* v1.3.10 */
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+         }
+      }
+
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (cx->format == 1) {
          char buffer[32], delim[4];
@@ -771,12 +806,19 @@ void mcursor::Previous(const FunctionCallbackInfo<Value>& args)
    else if (cx->context == 9) {
    
       DBX_DBFUN_START(c, pcon, pmeth);
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
 
       eod = dbx_global_directory(pmeth, cx->pqr_prev, -1, &(cx->counter));
 
+      if (pcon->error_code != CACHE_SUCCESS) {
+         dbx_error_message(pmeth, pcon->error_code, (char *) "mcursor::Previous::dbx_global_directory");
+         if (pcon->error_mode == 1) { /* v1.3.10 */
+            isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+         }
+      }
+
       DBX_DBFUN_END(c);
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
 
       if (eod) {
          goto Previous_EOD;

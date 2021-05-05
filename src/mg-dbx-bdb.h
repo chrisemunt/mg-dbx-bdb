@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "1"
 #define DBX_VERSION_MINOR        "3"
-#define DBX_VERSION_BUILD        "9"
+#define DBX_VERSION_BUILD        "10"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -484,12 +484,22 @@ DISABLE_WCAST_FUNCTION_TYPE
 
 #define DBX_DBFUN_END(C)
 
-#define DBX_DB_LOCK(RC, TIMEOUT) \
+#define DBX_DB_LOCK(TIMEOUT) \
+   if (pcon->use_mutex) { \
+      dbx_mutex_lock(pcon->p_mutex, TIMEOUT); \
+   } \
+
+#define DBX_DB_LOCK_EX(RC, TIMEOUT) \
    if (pcon->use_mutex) { \
       RC = dbx_mutex_lock(pcon->p_mutex, TIMEOUT); \
    } \
 
-#define DBX_DB_UNLOCK(RC) \
+#define DBX_DB_UNLOCK() \
+   if (pcon->use_mutex) { \
+      dbx_mutex_unlock(pcon->p_mutex); \
+   } \
+
+#define DBX_DB_UNLOCK_EX(RC) \
    if (pcon->use_mutex) { \
       RC = dbx_mutex_unlock(pcon->p_mutex); \
    } \
@@ -825,6 +835,7 @@ typedef struct tagDBXCON {
    short          key_type;
    short          utf8;
    short          use_mutex;
+   short          error_mode; /* v1.3.10 */
    char           type[64];
    char           db_library[256];
    char           db_file[256];
@@ -961,6 +972,7 @@ public:
    static void                   About                            (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Version                          (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   SetLogLevel                      (const v8::FunctionCallbackInfo<v8::Value>& args);
+   static void                   GetErrorMessage                  (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   LogMessage                       (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Charset                          (const v8::FunctionCallbackInfo<v8::Value>& args);
    static void                   Open                             (const v8::FunctionCallbackInfo<v8::Value>& args);
@@ -1036,7 +1048,6 @@ int                        bdb_get                    (DBXCON *pcon, DBT *key, D
 int                        bdb_cursor_get             (DBC *pcursor, DBT *key, DBXSTR *dbx_key, DBT *data, DBXSTR *dbx_data, int context);
 int                        bdb_resize_buffer          (DBT *key, DBXSTR *dbx_key, DBT *data, DBXSTR *dbx_data, int context);
 int                        bdb_error_message          (DBXCON *pcon, int error_code);
-int                        bdb_error                  (DBXCON *pcon, int error_code);
 
 int                        lmdb_load_library          (DBXCON *pcon);
 int                        lmdb_open                  (DBXMETH *pmeth);
@@ -1049,7 +1060,6 @@ int                        lmdb_next                  (DBXMETH *pmeth, DBXKEY *p
 int                        lmdb_previous              (DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, int context);
 int                        lmdb_key_compare           (MDB_val *key1, MDB_val *key2, int compare_max, short keytype);
 int                        lmdb_error_message         (DBXCON *pcon, int error_code);
-int                        lmdb_error                 (DBXCON *pcon, int error_code);
 
 int                        dbx_version                (DBXMETH *pmeth);
 int                        dbx_open                   (DBXMETH *pmeth);

@@ -61,6 +61,13 @@ Version 1.3.9 28 April 2021:
       Bear in mind that the default maximum key size for LMDB is 512 Bytes.  This can be modified at LMDB compile time - see the documentation for setting MDB_MAXKEYSIZE.
    Introduce a parameter (db_size) to the open() method to allow the size of the LMDB environment/database to be set.  The default maximum size for a LMDB database is 10M. 
 
+Version 1.3.10 5 May 2021:
+   Correct a memory leak.
+   Introduce an option to throw Node.js exceptions if synchronous calls to database operations result in an error condition.
+	- Specify the 'dberror_exceptions' property in the 'open()' method (default is 'false').
+   Introduce a method to return any error message associated with the previous database operation.
+	- var errormessage = db.geterrormessage()
+
 */
 
 
@@ -178,6 +185,7 @@ void DBX_DBNAME::Init(Handle<Object> exports)
 
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "version", Version);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "setloglevel", SetLogLevel);
+   DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "geterrormessage", GetErrorMessage);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "logmessage", LogMessage);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "charset", Charset);
    DBX_NODE_SET_PROTOTYPE_METHOD(tpl, "open", Open);
@@ -279,6 +287,11 @@ void DBX_DBNAME::New(const FunctionCallbackInfo<Value>& args)
    c->pcon->tlevelro = 0;
    c->pcon->tstatus = 0;
    c->pcon->tstatusro = 0;
+
+   /* v1.3.10 */
+   c->pcon->error[0] = '\0';
+   c->pcon->error_code = 0;
+   c->pcon->error_mode = 0;
 
    c->pcon->log_errors = 0;
    c->pcon->log_functions = 0;
@@ -606,6 +619,24 @@ void DBX_DBNAME::SetLogLevel(const FunctionCallbackInfo<Value>& args)
 }
 
 
+/* v1.3.10 */
+void DBX_DBNAME::GetErrorMessage(const FunctionCallbackInfo<Value>& args)
+{
+   DBXCON *pcon;
+   Local<String> result;
+   DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
+   DBX_GET_ISOLATE;
+   c->dbx_count ++;
+
+   pcon = c->pcon;
+
+   result = dbx_new_string8(isolate, (char *) pcon->error, pcon->utf8);
+   args.GetReturnValue().Set(result);
+
+   return;
+}
+
+
 void DBX_DBNAME::LogMessage(const FunctionCallbackInfo<Value>& args)
 {
   int js_narg, str_len;
@@ -854,6 +885,13 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
             p = p2 + 1;
          }
       }
+      else if (!strcmp(name, (char *) "dberror_exceptions")) { /* v1.3.10 */
+        if (DBX_GET(obj, key)->IsBoolean()) {
+            if (DBX_TO_BOOLEAN(DBX_GET(obj, key))->IsTrue()) {
+               pcon->error_mode = 1;
+            }
+         }
+      }
       else if (!strcmp(name, (char *) "multithreaded")) {
         if (DBX_GET(obj, key)->IsBoolean()) {
             if (DBX_TO_BOOLEAN(DBX_GET(obj, key))->IsFalse()) {
@@ -948,6 +986,12 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
    if (rc == CACHE_SUCCESS) {
       c->open = 1; 
    }
+   else {
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Open");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
+   }
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pcon->error, (int) strlen(pcon->error), (char *) DBX_DBNAME_STR "::open");
@@ -963,7 +1007,7 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
 void DBX_DBNAME::Close(const FunctionCallbackInfo<Value>& args)
 {
    short async;
-   int js_narg;
+   int js_narg, rc;
    DBXCON *pcon;
    DBXMETH *pmeth;
    DBX_DBNAME *c = ObjectWrap::Unwrap<DBX_DBNAME>(args.This());
@@ -1012,7 +1056,14 @@ void DBX_DBNAME::Close(const FunctionCallbackInfo<Value>& args)
       return;
    }
 
-   dbx_close(pmeth);
+   rc = dbx_close(pmeth);
+
+   if (rc != CACHE_SUCCESS) {
+      dbx_error_message(pmeth, rc, (char *) "dbxbdb::Close");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
+   }
 
 Close_Exit:
 
@@ -1127,7 +1178,7 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
    rc = 0;
 
    if (!context) {
-      DBX_DB_LOCK(rc, 0);
+      DBX_DB_LOCK(0);
    }
 
    pmeth->output_val.svalue.len_used = 0;
@@ -1291,10 +1342,13 @@ void DBX_DBNAME::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    }
    else if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::GetEx");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::get");
@@ -1377,10 +1431,13 @@ void DBX_DBNAME::Set(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::Set");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -1454,10 +1511,13 @@ void DBX_DBNAME::Defined(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::Defined");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::defined");
@@ -1534,10 +1594,13 @@ void DBX_DBNAME::Delete(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::Delete");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::delete");
@@ -1610,10 +1673,13 @@ void DBX_DBNAME::Next(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::Next");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::next");
@@ -1686,10 +1752,13 @@ void DBX_DBNAME::Previous(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::Previous");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::previous");
@@ -1764,10 +1833,13 @@ void DBX_DBNAME::Increment(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::Increment");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::increment");
@@ -1841,10 +1913,13 @@ void DBX_DBNAME::Lock(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::Lock");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::lock");
@@ -1918,10 +1993,13 @@ void DBX_DBNAME::Unlock(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::Unlock");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) DBX_DBNAME_STR "::unlock");
@@ -2244,12 +2322,12 @@ void DBX_DBNAME::Dump(const FunctionCallbackInfo<Value>& args)
 
    pcon = pmeth->pcon;
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbxbdb::Dump");
-      DBX_DB_UNLOCK(rc);
+      DBX_DB_UNLOCK();
       return;
    }
 
@@ -2468,6 +2546,7 @@ else {
 
 Dump_Exit:
 
+   rc = CACHE_SUCCESS;
    if (buffer.buf_addr) {
       dbx_free((void *) buffer.buf_addr, 0);
       buffer.buf_addr = NULL;
@@ -2477,7 +2556,7 @@ Dump_Exit:
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    result = dbx_new_string8n(isolate, pmeth->output_val.svalue.buf_addr, pmeth->output_val.svalue.len_used, pcon->utf8);
    args.GetReturnValue().Set(result);
@@ -2677,6 +2756,9 @@ int dbx_request_memory_free(DBXCON *pcon, DBXMETH *pmeth, short context)
       }
       if (pmeth->output_val.svalue.buf_addr) {
          dbx_free((void *) pmeth->output_val.svalue.buf_addr, 0);
+      }
+      if (pmeth->output_key.svalue.buf_addr) { /* v1.3.10 */
+         dbx_free((void *) pmeth->output_key.svalue.buf_addr, 0);
       }
       dbx_free((void *) pmeth, 0);
    }
@@ -3390,9 +3472,9 @@ __try {
       }
 
       cx->psql = psql;
-      DBX_DB_LOCK(n, 0);
+      DBX_DB_LOCK(0);
       psql->sql_no = ++ dbx_sql_counter;
-      DBX_DB_UNLOCK(n);
+      DBX_DB_UNLOCK();
    
       cx->context = 11;
       cx->counter = 0;
@@ -3684,6 +3766,7 @@ int bdb_open(DBXMETH *pmeth)
    char *pver;
    DBXCON *pcon = pmeth->pcon;
 
+   rc = 0;
    if (!pcon->p_bdb_so) {
       pcon->p_bdb_so = (DBXBDBSO *) dbx_malloc(sizeof(DBXBDBSO), 0);
       if (!pcon->p_bdb_so) {
@@ -3702,10 +3785,8 @@ int bdb_open(DBXMETH *pmeth)
    }
 
    if (pcon->p_bdb_so->loaded == 2) {
-      strcpy(pcon->error, "Cannot create multiple connections to the database");
-      pcon->error_code = 1009; 
+      /* Already connected */
       strcpy((char *) pmeth->output_val.svalue.buf_addr, "0");
-      rc = CACHE_NOCON;
       goto bdb_open_exit;
    }
 
@@ -3749,6 +3830,7 @@ int bdb_open(DBXMETH *pmeth)
       env_flags = DB_CREATE | DB_INIT_CDB| DB_INIT_MPOOL; /* Initialize the in-memory cache. */
 
       rc = pcon->p_bdb_so->penv->open(pcon->p_bdb_so->penv, pcon->env_dir, env_flags, 0);
+
       if (rc != 0) {
          /* Error handling goes here */
          strcpy(pcon->error, "Cannot create or open a BDB environment");
@@ -3757,6 +3839,7 @@ int bdb_open(DBXMETH *pmeth)
    }
 
    rc = pcon->p_bdb_so->p_db_create(&(pcon->p_bdb_so->pdb), pcon->p_bdb_so->penv, 0);
+
    if (rc != 0) {
       /* Error handling goes here */
       strcpy(pcon->error, "Cannot create a BDB object");
@@ -3773,6 +3856,7 @@ int bdb_open(DBXMETH *pmeth)
       DB_BTREE, /* Database access method */
       db_flags, /* Open flags */
       0); /* File mode (using defaults) */
+
    if (rc != 0) {
       /* Error handling goes here */
       strcpy(pcon->error, "Cannot create or open a BDB database");
@@ -4383,18 +4467,166 @@ int bdb_resize_buffer(DBT *key, DBXSTR *dbx_key, DBT *data, DBXSTR *dbx_data, in
 }
 
 
+/* v1.3.10 */
 int bdb_error_message(DBXCON *pcon, int error_code)
 {
-   sprintf(pcon->error, "Berkeley DB error code: %d", error_code);
+   switch (error_code) {
+      case 0:
+         strcpy(pcon->error, "");
+         break;
+      case DB_BUFFER_SMALL:
+         sprintf(pcon->error, "BDB error %d (DB_BUFFER_SMALL) User memory too small for return", error_code);
+         break;
+      case DB_DONOTINDEX:
+         sprintf(pcon->error, "BDB error %d (DB_DONOTINDEX) 'Null' return from secondary callback", error_code);
+         break;
+      case DB_FOREIGN_CONFLICT:
+         sprintf(pcon->error, "BDB error %d (DB_FOREIGN_CONFLICT) A foreign DB constraint triggered", error_code);
+         break;
+      case DB_HEAP_FULL:
+         sprintf(pcon->error, "BDB error %d (DB_HEAP_FULL) No free space in a heap file", error_code);
+         break;
+      case DB_KEYEMPTY:
+         sprintf(pcon->error, "BDB error %d (DB_KEYEMPTY) Key/data deleted or never created", error_code);
+         break;
+      case DB_KEYEXIST:
+         sprintf(pcon->error, "BDB error %d (DB_KEYEXIST) The key/data pair already exists", error_code);
+         break;
+      case DB_LOCK_DEADLOCK:
+         sprintf(pcon->error, "BDB error %d (DB_LOCK_DEADLOCK) Deadlock", error_code);
+         break;
+      case DB_LOCK_NOTGRANTED:
+         sprintf(pcon->error, "BDB error %d (DB_LOCK_NOTGRANTED) Lock unavailable", error_code);
+         break;
+      case DB_LOG_BUFFER_FULL:
+         sprintf(pcon->error, "BDB error %d (DB_LOG_BUFFER_FULL) In-memory log buffer full", error_code);
+         break;
+      case DB_LOG_VERIFY_BAD:
+         sprintf(pcon->error, "BDB error %d (DB_LOG_VERIFY_BAD) Log verification failed", error_code);
+         break;
+      case DB_META_CHKSUM_FAIL:
+         sprintf(pcon->error, "BDB error %d (DB_META_CHKSUM_FAIL) Metadata page checksum failed", error_code);
+         break;
+      case DB_NOSERVER:
+         sprintf(pcon->error, "BDB error %d (DB_NOSERVER) Server panic return", error_code);
+         break;
+      case DB_NOTFOUND:
+         sprintf(pcon->error, "BDB error %d (DB_NOTFOUND) Key/data pair not found (EOF)", error_code);
+         break;
+      case DB_OLD_VERSION:
+         sprintf(pcon->error, "BDB error %d (DB_OLD_VERSION) Out-of-date version", error_code);
+         break;
+      case DB_PAGE_NOTFOUND:
+         sprintf(pcon->error, "BDB error %d (DB_PAGE_NOTFOUND) Requested page not found", error_code);
+         break;
+      case DB_REP_DUPMASTER:
+         sprintf(pcon->error, "BDB error %d (DB_REP_DUPMASTER) There are two masters", error_code);
+         break;
+      case DB_REP_HANDLE_DEAD:
+         sprintf(pcon->error, "BDB error %d (DB_REP_HANDLE_DEAD) Rolled back a commit", error_code);
+         break;
+      case DB_REP_HOLDELECTION:
+         sprintf(pcon->error, "BDB error %d (DB_REP_HOLDELECTION) Time to hold an election", error_code);
+         break;
+      case DB_REP_IGNORE:
+         sprintf(pcon->error, "BDB error %d (DB_REP_IGNORE) This message should be ignored", error_code);
+         break;
+      case DB_REP_INELECT:
+         sprintf(pcon->error, "BDB error %d (DB_REP_INELECT) Replication is in an election", error_code);
+         break;
+      case DB_REP_ISPERM:
+         sprintf(pcon->error, "BDB error %d (DB_REP_ISPERM) Cached not written; permanent written", error_code);
+         break;
+      case DB_REP_JOIN_FAILURE:
+         sprintf(pcon->error, "BDB error %d (DB_REP_JOIN_FAILURE) Unable to join replication group", error_code);
+         break;
+      case DB_REP_LEASE_EXPIRED:
+         sprintf(pcon->error, "BDB error %d (DB_REP_LEASE_EXPIRED) Master lease has expired", error_code);
+         break;
+      case DB_REP_LOCKOUT:
+         sprintf(pcon->error, "BDB error %d (DB_REP_LOCKOUT) API/Replication lockout now", error_code);
+         break;
+      case DB_REP_NEWSITE:
+         sprintf(pcon->error, "BDB error %d (DB_REP_NEWSITE) New site entered system", error_code);
+         break;
+      case DB_REP_NOTPERM:
+         sprintf(pcon->error, "BDB error %d (DB_REP_NOTPERM) Permanent log record not written", error_code);
+         break;
+      case DB_REP_UNAVAIL:
+         sprintf(pcon->error, "BDB error %d (DB_REP_UNAVAIL) Site cannot currently be reached", error_code);
+         break;
+      case DB_REP_WOULDROLLBACK:
+         sprintf(pcon->error, "BDB error %d (DB_REP_WOULDROLLBACK) UNDOC: rollback inhibited by app", error_code);
+         break;
+      case DB_RUNRECOVERY:
+         sprintf(pcon->error, "BDB error %d (DB_RUNRECOVERY) Panic return", error_code);
+         break;
+      case DB_SECONDARY_BAD:
+         sprintf(pcon->error, "BDB error %d (DB_SECONDARY_BAD) Secondary index corrupt", error_code);
+         break;
+      case DB_SLICE_CORRUPT:
+         sprintf(pcon->error, "BDB error %d (DB_SLICE_CORRUPT) A part of a sliced ENV is corrupt", error_code);
+         break;
+      case DB_TIMEOUT:
+         sprintf(pcon->error, "BDB error %d (DB_TIMEOUT) Timed out on read consistency", error_code);
+         break;
+      case DB_VERIFY_BAD:
+         sprintf(pcon->error, "BDB error %d (DB_VERIFY_BAD) Verify failed; bad format", error_code);
+         break;
+      case DB_VERSION_MISMATCH:
+         sprintf(pcon->error, "BDB error %d (DB_VERSION_MISMATCH) Environment version mismatch", error_code);
+         break;
+      case DB_SYSTEM_MEM_MISSING:
+         sprintf(pcon->error, "BDB error %d (DB_SYSTEM_MEM_MISSING) Attach to shared memory failed", error_code);
+         break;
+      case DB_ALREADY_ABORTED:
+         sprintf(pcon->error, "BDB error %d (DB_ALREADY_ABORTED) Transaction aborted", error_code);
+         break;
+      case DB_DELETED:
+         sprintf(pcon->error, "BDB error %d (DB_DELETED) Recovery file marked deleted", error_code);
+         break;
+      case DB_EVENT_NOT_HANDLED:
+         sprintf(pcon->error, "BDB error %d (DB_EVENT_NOT_HANDLED) Forward event to application", error_code);
+         break;
+      case DB_NEEDSPLIT:
+         sprintf(pcon->error, "BDB error %d (DB_NEEDSPLIT) Page needs to be split", error_code);
+         break;
+      case DB_NOINTMP:
+         sprintf(pcon->error, "BDB error %d (DB_NOINTMP) Sequences not supported in temporary or in-memory databases", error_code);
+         break;
+      case DB_REP_BULKOVF:
+         sprintf(pcon->error, "BDB error %d (DB_REP_BULKOVF) Rep bulk buffer overflow", error_code);
+         break;
+      case DB_REP_LOGREADY:
+         sprintf(pcon->error, "BDB error %d (DB_REP_LOGREADY) Rep log ready for recovery", error_code);
+         break;
+      case DB_REP_NEWMASTER:
+         sprintf(pcon->error, "BDB error %d (DB_REP_NEWMASTER) We have learned of a new master", error_code);
+         break;
+      case DB_REP_PAGEDONE:
+         sprintf(pcon->error, "BDB error %d (DB_REP_PAGEDONE) This page was already done", error_code);
+         break;
+      case DB_SURPRISE_KID:
+         sprintf(pcon->error, "BDB error %d (DB_SURPRISE_KID) Child commit where parent didn't know it was a parent", error_code);
+         break;
+      case DB_SWAPBYTES:
+         sprintf(pcon->error, "BDB error %d (DB_SWAPBYTES) Database needs byte swapping", error_code);
+         break;
+      case DB_TXN_CKP:
+         sprintf(pcon->error, "BDB error %d (DB_TXN_CKP) Encountered ckp record in log.", error_code);
+         break;
+      case DB_VERIFY_FATAL:
+         sprintf(pcon->error, "BDB error %d (DB_VERIFY_FATAL) DB->verify cannot proceed", error_code);
+         break;
+      case CACHE_NOCON:
+         sprintf(pcon->error, "BDB error %d (DB_UNAVAILABLE) DB unavailable - check installation", error_code);
+         break;
+      default:
+         sprintf(pcon->error, "BDB error %d (DB_UNKNOWN) Unknown error condition", error_code);
+         break;
+   }
+
    return 0;
-}
-
-
-int bdb_error(DBXCON *pcon, int error_code)
-{
-   T_STRCPY(pcon->error, _dbxso(pcon->error), "General BDB Error");
-
-   return 1;
 }
 
 
@@ -5366,18 +5598,85 @@ int lmdb_key_compare(MDB_val *key1, MDB_val *key2, int compare_max, short keytyp
 }
 
 
+/* v1.3.10 */
 int lmdb_error_message(DBXCON *pcon, int error_code)
 {
-   sprintf(pcon->error, "LMDB error code: %d", error_code);
+   switch (error_code) {
+      case MDB_SUCCESS:
+         strcpy(pcon->error, "");
+         break;
+      case MDB_KEYEXIST:
+         sprintf(pcon->error, "LMDB error %d (MDB_KEYEXIST) Key/data pair already exists", error_code);
+         break;
+      case MDB_NOTFOUND:
+         sprintf(pcon->error, "LMDB error %d (MDB_NOTFOUND) Key/data pair not found (EOF)", error_code);
+         break;
+      case MDB_PAGE_NOTFOUND:
+         sprintf(pcon->error, "LMDB error %d (MDB_PAGE_NOTFOUND) Requested page not found - this usually indicates corruption", error_code);
+         break;
+      case MDB_CORRUPTED:
+         sprintf(pcon->error, "LMDB error %d (MDB_CORRUPTED) Located page was wrong type", error_code);
+         break;
+      case MDB_PANIC:
+         sprintf(pcon->error, "LMDB error %d (MDB_PANIC) Update of meta page failed or environment had fatal error", error_code);
+         break;
+      case MDB_VERSION_MISMATCH:
+         sprintf(pcon->error, "LMDB error %d (MDB_VERSION_MISMATCH) Environment version mismatch", error_code);
+         break;
+      case MDB_INVALID:
+         sprintf(pcon->error, "LMDB error %d (MDB_INVALID) File is not a valid LMDB file", error_code);
+         break;
+      case MDB_MAP_FULL:
+         sprintf(pcon->error, "LMDB error %d (MDB_MAP_FULL) Environment mapsize reached", error_code);
+         break;
+      case MDB_DBS_FULL:
+         sprintf(pcon->error, "LMDB error %d (MDB_DBS_FULL) Environment maxdbs reached", error_code);
+         break;
+      case MDB_READERS_FULL:
+         sprintf(pcon->error, "LMDB error %d (MDB_READERS_FULL) Environment maxreaders reached", error_code);
+         break;
+      case MDB_TLS_FULL:
+         sprintf(pcon->error, "LMDB error %d (MDB_TLS_FULL) Too many TLS keys in use - Windows only", error_code);
+         break;
+      case MDB_TXN_FULL:
+         sprintf(pcon->error, "LMDB error %d (MDB_TXN_FULL) Transaction has too many dirty pages", error_code);
+         break;
+      case MDB_CURSOR_FULL:
+         sprintf(pcon->error, "LMDB error %d (MDB_CURSOR_FULL) Cursor stack too deep - internal error", error_code);
+         break;
+      case MDB_PAGE_FULL:
+         sprintf(pcon->error, "LMDB error %d (MDB_PAGE_FULL) Page has not enough space - internal error", error_code);
+         break;
+      case MDB_MAP_RESIZED:
+         sprintf(pcon->error, "LMDB error %d (MDB_MAP_RESIZED) Database contents grew beyond environment mapsize", error_code);
+         break;
+      case MDB_INCOMPATIBLE:
+         sprintf(pcon->error, "LMDB error %d (MDB_INCOMPATIBLE) Operation and DB incompatible, or DB type changed", error_code);
+         break;
+      case MDB_BAD_RSLOT:
+         sprintf(pcon->error, "LMDB error %d (MDB_BAD_RSLOT) Invalid reuse of reader locktable slot", error_code);
+         break;
+      case MDB_BAD_TXN:
+         sprintf(pcon->error, "LMDB error %d (MDB_BAD_TXN) Transaction must abort, has a child, or is invalid", error_code);
+         break;
+      case MDB_BAD_VALSIZE:
+         sprintf(pcon->error, "LMDB error %d (MDB_BAD_VALSIZE) Unsupported size of key/DB name/data, or wrong DUPFIXED size", error_code);
+         break;
+      case MDB_BAD_DBI:
+         sprintf(pcon->error, "LMDB error %d (MDB_BAD_DBI) The specified DBI was changed unexpectedly", error_code);
+         break;
+      case MDB_PROBLEM:
+         sprintf(pcon->error, "LMDB error %d (MDB_PROBLEM) General problem", error_code);
+         break;
+      case CACHE_NOCON:
+         sprintf(pcon->error, "LMDB error %d (DB_UNAVAILABLE) DB unavailable - check installation", error_code);
+         break;
+      default:
+         sprintf(pcon->error, "LMDB error %d (MDB_UNKNOWN) Unknown error condition", error_code);
+         break;
+   }
+
    return 0;
-}
-
-
-int lmdb_error(DBXCON *pcon, int error_code)
-{
-   T_STRCPY(pcon->error, _dbxso(pcon->error), "General LMDB Error");
-
-   return 1;
 }
 
 
@@ -5502,7 +5801,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -5637,7 +5936,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -5680,7 +5979,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -5695,7 +5994,7 @@ int dbx_get(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    rc = dbx_global_reference(pmeth);
 
@@ -5790,9 +6089,9 @@ __try {
 
 dbx_get_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -5810,7 +6109,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -5825,7 +6124,7 @@ int dbx_set(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    rc = dbx_global_reference(pmeth);
 
@@ -5920,7 +6219,7 @@ __try {
 
 dbx_set_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    return rc;
 
@@ -5940,7 +6239,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -5955,7 +6254,7 @@ int dbx_defined(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
@@ -6148,6 +6447,7 @@ __try {
 
    if (rc == CACHE_SUCCESS || rc == CACHE_ERUNDEF) {
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
+      rc = CACHE_SUCCESS;
    }
    else {
       dbx_error_message(pmeth, rc, (char *) "dbx_defined");
@@ -6155,9 +6455,9 @@ __try {
 
 dbx_defined_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6175,7 +6475,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -6193,7 +6493,7 @@ int dbx_delete(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
@@ -6347,9 +6647,9 @@ __try {
 
 dbx_delete_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6367,7 +6667,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -6382,7 +6682,7 @@ int dbx_next(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
@@ -6397,15 +6697,18 @@ __try {
       rc = lmdb_next(pmeth, &(pmeth->key), &(pmeth->output_val), &(pmeth->output_key), 0);
    }
 
-   if (rc != CACHE_SUCCESS) {
+   if (rc == YDB_NODE_END) {
+      rc = CACHE_SUCCESS;
+   }
+   else if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbx_next");
    }
 
 dbx_next_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6423,7 +6726,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -6438,7 +6741,7 @@ int dbx_previous(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    rc = dbx_global_reference(pmeth);
    if (rc != CACHE_SUCCESS) {
@@ -6453,15 +6756,18 @@ __try {
       rc = lmdb_previous(pmeth, &(pmeth->key), &(pmeth->output_val), &(pmeth->output_key), 0);
    }
 
-   if (rc != CACHE_SUCCESS) {
+   if (rc == YDB_NODE_END) {
+      rc = CACHE_SUCCESS;
+   }
+   else if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "dbx_previous");
    }
 
 dbx_previous_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6479,7 +6785,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -6495,7 +6801,7 @@ int dbx_increment(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    pmeth->increment = 1;
    rc = dbx_global_reference(pmeth);
@@ -6615,9 +6921,9 @@ __try {
 
 dbx_increment_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6635,7 +6941,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -6652,7 +6958,7 @@ int dbx_lock(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    pmeth->lock = 1;
    rc = dbx_global_reference(pmeth);
@@ -6726,9 +7032,9 @@ __try {
 
 dbx_lock_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6746,7 +7052,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -6761,7 +7067,7 @@ int dbx_unlock(DBXMETH *pmeth)
 __try {
 #endif
 
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    pmeth->lock = 2;
    rc = dbx_global_reference(pmeth);
@@ -6795,9 +7101,9 @@ __try {
 
 dbx_unlock_exit:
 
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -6815,7 +7121,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -6834,7 +7140,7 @@ __try {
    printf("\r\nlen=%d\r\n", pmeth->key.ibuffer.len_used);
    dbx_dump_key((char *) pmeth->key.ibuffer.buf_addr, (int) pmeth->key.ibuffer.len_used);
 */
-   DBX_DB_LOCK(rc, 0);
+   DBX_DB_LOCK(0);
 
    ref1_csize = 0;
    ref2_csize = 0;
@@ -7025,7 +7331,7 @@ __try {
 
 dbx_merge_exit:
 
-   return 0;
+   return rc;
 
 #ifdef _WIN32
 }
@@ -7043,7 +7349,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 
@@ -7077,6 +7383,8 @@ int dbx_global_directory(DBXMETH *pmeth, DBXQR *pqr_prev, short dir, int *counte
 #ifdef _WIN32
 __try {
 #endif
+
+   pcon->error_code = 0;
 
    if (pcon->log_transmissions) {
       int nx;
@@ -7138,6 +7446,10 @@ __try {
          dbx_log_response(pcon, (char *) pqr_prev->global_name.buf_addr, (int) pqr_prev->global_name.len_used, (char *) (dir == 1 ? "mcursor::next (global directory)" : "mcursor::previous (global directory)"));
    }
 
+   if (rc != CACHE_SUCCESS && rc != YDB_NODE_END) {
+      pcon->error_code = rc;
+   }
+
    return eod;
 
 #ifdef _WIN32
@@ -7156,7 +7468,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -7171,6 +7483,7 @@ int dbx_global_order(DBXMETH *pmeth, DBXQR *pqr_prev, short dir, short getdata, 
 __try {
 #endif
 
+   pcon->error_code = 0;
    rc = 0;
    eod = 0;
    if (pcon->log_transmissions) {
@@ -7219,6 +7532,9 @@ __try {
          dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (dir == 1 ? "mcursor::next (order)" : "mcursor::previous (order)"));
    }
 
+   if (rc != CACHE_SUCCESS && rc != YDB_NODE_END) {
+      pcon->error_code = rc;
+   }
    return eod;
 
 #ifdef _WIN32
@@ -7237,7 +7553,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }
@@ -7252,6 +7568,7 @@ int dbx_global_query(DBXMETH *pmeth, DBXQR *pqr_next, DBXQR *pqr_prev, short dir
 __try {
 #endif
 
+   pcon->error_code = 0;
    eod = 0;
    if (pcon->log_transmissions) {
       int nx;
@@ -7769,6 +8086,9 @@ __try {
       }
    }
 
+   if (rc != CACHE_SUCCESS && rc != YDB_NODE_END) {
+      pcon->error_code = rc;
+   }
    return eod;
 
 #ifdef _WIN32
@@ -7787,7 +8107,7 @@ __except (EXCEPTION_EXECUTE_HANDLER) {
       ;
    }
 
-   return 0;
+   return CACHE_FAILURE;
 }
 #endif
 }

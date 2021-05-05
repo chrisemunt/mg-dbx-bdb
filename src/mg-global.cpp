@@ -290,10 +290,13 @@ void mglobal::GetEx(const FunctionCallbackInfo<Value>& args, int binary)
    }
    else if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "mglobal::GetEx");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
    
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::get");
@@ -372,18 +375,18 @@ void mglobal::Set(const FunctionCallbackInfo<Value>& args)
 
    rc = dbx_set(pmeth);
 
-   if (rc == CACHE_ERUNDEF) {
-      dbx_create_string(&(pmeth->output_val.svalue), (void *) "", DBX_DTYPE_STR);
-   }
-   else if (rc == CACHE_SUCCESS) {
+   if (rc == CACHE_SUCCESS) {
       dbx_create_string(&(pmeth->output_val.svalue), &rc, DBX_DTYPE_INT);
    }
    else {
       dbx_error_message(pmeth, rc, (char *) "mglobal::Set");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::set");
@@ -458,10 +461,13 @@ void mglobal::Defined(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "mglobal::Defined");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::defined");
@@ -540,11 +546,14 @@ void mglobal::Delete(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc, (char *) "mglobal::Delete");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::delete");
@@ -619,10 +628,13 @@ void mglobal::Next(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "mglobal::Next");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::next");
@@ -697,10 +709,13 @@ void mglobal::Previous(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "mglobal::Previous");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::previous");
@@ -777,10 +792,13 @@ void mglobal::Increment(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "mglobal::Increment");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::increment");
@@ -861,10 +879,13 @@ void mglobal::Lock(const FunctionCallbackInfo<Value>& args)
  
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "mglobal::Lock");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::lock");
@@ -940,10 +961,13 @@ void mglobal::Unlock(const FunctionCallbackInfo<Value>& args)
 
    if (rc != CACHE_SUCCESS) {
       dbx_error_message(pmeth, rc, (char *) "mglobal::Unlock");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
-   DBX_DB_UNLOCK(rc);
+   DBX_DB_UNLOCK();
 
    if (pcon->log_transmissions == 2) {
       dbx_log_response(pcon, (char *) pmeth->output_val.svalue.buf_addr, (int) pmeth->output_val.svalue.len_used, (char *) (char *) "mglobal::unlock");
@@ -1115,6 +1139,9 @@ void mglobal::Merge(const FunctionCallbackInfo<Value>& args)
    }
    else {
       dbx_error_message(pmeth, rc, (char *) "mglobal::Merge");
+      if (pcon->error_mode == 1) { /* v1.3.10 */
+         isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) pcon->error, 1)));
+      }
    }
 
    DBX_DBFUN_END(c);
