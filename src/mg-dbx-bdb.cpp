@@ -5665,9 +5665,11 @@ int lmdb_error_message(DBXCON *pcon, int error_code)
       case MDB_BAD_DBI:
          sprintf(pcon->error, "LMDB error %d (MDB_BAD_DBI) The specified DBI was changed unexpectedly", error_code);
          break;
+#if defined(MDB_PROBLEM)
       case MDB_PROBLEM:
          sprintf(pcon->error, "LMDB error %d (MDB_PROBLEM) General problem", error_code);
          break;
+#endif
       case CACHE_NOCON:
          sprintf(pcon->error, "LMDB error %d (DB_UNAVAILABLE) DB unavailable - check installation", error_code);
          break;
