@@ -72,6 +72,20 @@ Version 1.3.11 13 May 2021:
    Improve the reliability and resilience of the code base.
    - Correct a number of uninitialized variables and other potential bugs discovered by an analysis using Valgrind.
 
+Version 1.3.12 13 May 2021:
+   Following on from v1.3.11: correct a fault that led to the following BDB error being returned when deleting records from the database:
+   - BDB0697 Write attempted on read-only cursor.
+
+*/
+
+
+/*
+Berkeley DB: recover database after a crash:
+      /usr/local/BerkeleyDB.18.1/bin/db_recover -h /opt/bdb/
+   verify:
+      /usr/local/BerkeleyDB.18.1/bin/db_verify -h /opt/bdb/my_bdb_database.db
+   dump:
+      /usr/local/BerkeleyDB.18.1/bin/db_dump -d a /opt/bdb/my_bdb_database.db
 */
 
 
@@ -6216,8 +6230,8 @@ __try {
 */
       rc = pcon->p_bdb_so->pdb->put(pcon->p_bdb_so->pdb, NULL, &key, &data, 0);
 
-      /* v1.3.11 */
-      pcon->p_bdb_so->pdb->sync(pcon->p_bdb_so->pdb, 0);
+      /* v1.3.12 */
+      /* pcon->p_bdb_so->pdb->sync(pcon->p_bdb_so->pdb, 0); */
 
       /* v1.3.11 - a test to read back data to confirm that update worked */
 /*
@@ -6653,8 +6667,9 @@ __try {
             if (rc == CACHE_SUCCESS && !bdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
                for (;;) {
                   /* dbx_dump_key((char *) key.data, (int) key.size); */
-                  /* rc = pcon->p_bdb_so->pdb->del(pcon->p_bdb_so->pdb, NULL, &key, 0); */
-                  rc = pcursor->del(pcursor, 0); /* v1.3.11 */
+                  /* v1.3.11  v1.3.12 */
+                  rc = pcon->p_bdb_so->pdb->del(pcon->p_bdb_so->pdb, NULL, &key, 0);
+                  /* rc = pcursor->del(pcursor, 0); */
                   rc = bdb_cursor_get(pcursor, &key, &(pmeth->key.ibuffer), &data, &(pmeth->output_val.svalue), DB_NEXT); /* v1.3.9 */
                   if (rc == DB_NOTFOUND) { /* v1.3.11 */
                      rc = CACHE_SUCCESS;
@@ -6673,7 +6688,8 @@ __try {
          rc = CACHE_SUCCESS;
       }
 
-      pcon->p_bdb_so->pdb->sync(pcon->p_bdb_so->pdb, 0); /* v1.3.11 */
+      /* v1.3.12 */
+      /* pcon->p_bdb_so->pdb->sync(pcon->p_bdb_so->pdb, 0); */
 
    }
    else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
