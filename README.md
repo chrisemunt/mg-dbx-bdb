@@ -851,3 +851,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Improve the reliability and resilience of the code base. 
 	* Correct a number of uninitialized variables and other potential bugs discovered by an analysis using Valgrind.
+
+### v1.3.12 (13 May 2021)
+
+* Following on from v1.3.11: correct a fault that led to the following BDB error being returned when deleting records from the database: BDB0697 Write attempted on read-only cursor.
