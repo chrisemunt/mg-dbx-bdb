@@ -33,7 +33,7 @@
 
 #define DBX_VERSION_MAJOR        "1"
 #define DBX_VERSION_MINOR        "3"
-#define DBX_VERSION_BUILD        "10"
+#define DBX_VERSION_BUILD        "11"
 
 #define DBX_VERSION              DBX_VERSION_MAJOR "." DBX_VERSION_MINOR "." DBX_VERSION_BUILD
 
@@ -1113,6 +1113,7 @@ int                        dbx_lcase                  (char *string);
 
 int                        dbx_create_string          (DBXSTR *pstr, void *data, short type);
 
+int                        dbx_dump_mref              (DBXCON *pcon, DBXMETH *pmeth, char *cmnd, DBXVAL *presult, int rc);
 int                        dbx_log_transmission       (DBXCON *pcon, DBXMETH *pmeth, char *name);
 int                        dbx_log_response           (DBXCON *pcon, char *ibuffer, int ibuffer_len, char *name);
 int                        dbx_buffer_dump            (DBXMETH *pmeth, void *buffer, unsigned int len, char *title, unsigned char csize, short mode);

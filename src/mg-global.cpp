@@ -144,6 +144,7 @@ void mglobal::New(const FunctionCallbackInfo<Value>& args)
          obj->c = c;
          obj->pkey = NULL;
          obj->global_name[0] = '\0';
+
          rc = dbx_global_reset(args, isolate, pcon, pmeth, (void *) obj, 1, 1);
          if (rc < 0) {
             isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The mglobal::New() method takes at least one argument (the global name)", 1)));

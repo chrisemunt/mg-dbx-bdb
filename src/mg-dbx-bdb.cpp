@@ -68,6 +68,10 @@ Version 1.3.10 5 May 2021:
    Introduce a method to return any error message associated with the previous database operation.
 	- var errormessage = db.geterrormessage()
 
+Version 1.3.11 13 May 2021:
+   Improve the reliability and resilience of the code base.
+   - Correct a number of uninitialized variables and other potential bugs discovered by an analysis using Valgrind.
+
 */
 
 
@@ -893,6 +897,7 @@ void DBX_DBNAME::Open(const FunctionCallbackInfo<Value>& args)
          }
       }
       else if (!strcmp(name, (char *) "multithreaded")) {
+
         if (DBX_GET(obj, key)->IsBoolean()) {
             if (DBX_TO_BOOLEAN(DBX_GET(obj, key))->IsFalse()) {
                c->use_mutex = 0;
@@ -1181,6 +1186,7 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
       DBX_DB_LOCK(0);
    }
 
+   str = dbx_new_string8(isolate, (char *) "", pcon->utf8);
    pmeth->output_val.svalue.len_used = 0;
    nx = 0;
    n = 0;
@@ -1188,9 +1194,11 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
    if (pcon->key_type == DBX_KEYTYPE_M) {
       pmeth->key.args[nx].cvalue.pstr = 0;
       if (pgref) {
+         pmeth->key.args[nx].type = DBX_DTYPE_STR;
          dbx_ibuffer_add(pmeth, &(pmeth->key), isolate, nx, str, pgref->global, (int) strlen(pgref->global), 0);
       }
       else {
+         pmeth->key.args[nx].type = DBX_DTYPE_STR;
          str = DBX_TO_STRING(args[n]);
          dbx_ibuffer_add(pmeth, &(pmeth->key), isolate, nx, str, NULL, 0, 0);
          n ++;
@@ -1224,6 +1232,7 @@ int DBX_DBNAME::GlobalReference(DBX_DBNAME *c, const FunctionCallbackInfo<Value>
       if (args[n]->IsInt32()) {
          pmeth->key.args[nx].type = DBX_DTYPE_INT;
          pmeth->key.args[nx].num.int32 = (int) DBX_INT32_VALUE(args[n]);
+
          T_SPRINTF(buffer, _dbxso(buffer), "%d", pmeth->key.args[nx].num.int32);
          dbx_ibuffer_add(pmeth, &(pmeth->key), isolate, nx, str, buffer, (int) strlen(buffer), 0);
       }
@@ -2043,6 +2052,7 @@ void DBX_DBNAME::MGlobal(const FunctionCallbackInfo<Value>& args)
    gx->pkey = NULL;
 
    /* 1.4.10 */
+
    rc = dbx_global_reset(args, isolate, pcon, pmeth, (void *) gx, 0, 0);
    if (rc < 0) {
       isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "The mglobal method takes at least one argument (the global name)", 1)));
@@ -2307,7 +2317,7 @@ void DBX_DBNAME::Dump(const FunctionCallbackInfo<Value>& args)
    DBX_CALLBACK_FUN(pmeth->jsargc, cb, rc);
 
    if (pmeth->jsargc >= DBX_MAXARGS) {
-      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Next", 1)));
+      isolate->ThrowException(Exception::Error(dbx_new_string8(isolate, (char *) "Too many arguments on Dump", 1)));
       dbx_request_memory_free(pcon, pmeth, 0);
       return;
    }
@@ -2360,7 +2370,6 @@ void DBX_DBNAME::Dump(const FunctionCallbackInfo<Value>& args)
 
       bdb_data.data = (void *) pmeth->output_key.svalue.buf_addr;
       bdb_data.ulen = (u_int32_t)  pmeth->output_key.svalue.len_alloc;
-
       rc = bdb_cursor_get(bdb_pcursor, &bdb_key, &(pmeth->output_val.svalue), &bdb_data, &(pmeth->output_key.svalue), DB_FIRST); /* v1.3.9 */
       if (rc != CACHE_SUCCESS) {
          goto Dump_Exit;
@@ -2453,7 +2462,8 @@ else {
       buffer.buf_addr[n1 ++] = '=';
       buffer.buf_addr[n1 ++] = ' ';
          if (option == 1) {
-            sprintf((buffer.buf_addr + n1), "string[%d]", (int) rdata_size);
+rdata[rdata_size] = '\0';
+            sprintf((buffer.buf_addr + n1), "string[%d] %s", (int) rdata_size, rdata);
             n1 += (int) strlen((char *) (buffer.buf_addr + n1));
          }
 else {
@@ -2517,6 +2527,7 @@ else {
 
       if (pcon->dbtype == DBX_DBTYPE_BDB) {
          rc = bdb_cursor_get(bdb_pcursor, &bdb_key, &(pmeth->output_val.svalue), &bdb_data, &(pmeth->output_key.svalue), DB_NEXT); /* v1.3.9 */
+         /* rc = bdb_pcursor->get(bdb_pcursor, &bdb_key, &bdb_data, DB_NEXT); */
 
          rkey = (char *) bdb_key.data;
          rkey_size = (int) bdb_key.size;
@@ -2741,6 +2752,16 @@ DBXMETH * dbx_request_memory_alloc(DBXCON *pcon, short context)
    pmeth->key.ibuffer.len_used = 0;
    pmeth->key.ibuffer.len_alloc = CACHE_MAXSTRLEN;
 
+   /* v1.3.11 */
+   pmeth->key.args[0].svalue.buf_addr = pmeth->key.ibuffer.buf_addr;
+   pmeth->key.args[0].svalue.len_alloc = pmeth->key.ibuffer.len_alloc;
+   pmeth->key.args[0].svalue.len_used = 0;
+
+   pmeth->key.args[1].svalue.buf_addr = NULL;
+   pmeth->key.args[1].svalue.len_alloc = 0;
+   pmeth->key.args[1].svalue.len_used = 0;
+
+
    return pmeth;
 }
 
@@ -2935,7 +2956,8 @@ __try {
 
    /* 1.4.11 resize input buffer if necessary */
 
-   if ((pkey->ibuffer.len_used + len + 32) >pkey->ibuffer.len_alloc) {
+   if ((pkey->ibuffer.len_used + len + 32) > pkey->ibuffer.len_alloc) {
+
       p = (unsigned char *) dbx_malloc(sizeof(char) * (pkey->ibuffer.len_used + len + CACHE_MAXSTRLEN), 301);
       if (p) {
          if (pkey->ibuffer.buf_addr && pkey->ibuffer.len_used > 0) { 
@@ -2958,7 +2980,7 @@ __try {
 
    if (pmeth->pcon->key_type == DBX_KEYTYPE_M) {
       if (pkey->args[argn].type == DBX_DTYPE_INT) {
-         dbx_set_number(&pkey->args[argn], p);
+         dbx_set_number(&(pkey->args[argn]), p);
          p += 10;
          pkey->ibuffer.len_used += 10;
       }
@@ -2984,13 +3006,13 @@ __try {
    pkey->argc = argn;
 
    if (pmeth->pcon->key_type == DBX_KEYTYPE_M) {
-      if (pkey->args[argn].type == DBX_DTYPE_STR && dbx_is_number(&pkey->args[argn])) { /* See if we have a stringified number */
+      if (pkey->args[argn].type == DBX_DTYPE_STR && dbx_is_number(&(pkey->args[argn]))) { /* See if we have a stringified number */
 
          for (n = (len - 1); n >= 0; n --) {
             p[n + 8] = p[n];
          }
 
-         dbx_set_number(&pkey->args[argn], p - 2);
+         dbx_set_number(&(pkey->args[argn]), p - 2);
          p += 8;
          pkey->ibuffer.len_used += 8;
          pkey->args[argn].svalue.buf_addr = (char *) p;
@@ -3175,7 +3197,7 @@ int dbx_split_key(DBXVAL *keys, char * key, int key_len)
    }
 
    for (n = 0; n < keyn; n ++) {
-      if (keys[keyn].type == DBX_DTYPE_INT) {
+      if (keys[n].type == DBX_DTYPE_INT) {  /* v1.3.11 was keys[keyn].type == DBX_DTYPE_INT */
          strncpy(numstr, keys[n].svalue.buf_addr, keys[n].svalue.len_used);
          numstr[keys[n].svalue.len_used] = '\0';
          dp = strstr(numstr, ".");
@@ -3329,7 +3351,7 @@ __try {
             pval = (DBXVAL *) dbx_malloc(sizeof(DBXVAL) + len + 32, 0);
             pval->type = DBX_DTYPE_STR;
             pval->svalue.buf_addr = ((char *) pval) + sizeof(DBXVAL);
-            dbx_memcpy_exx(&(pval->svalue), (void *) p, (size_t) len);
+            memcpy((void *) pval->svalue.buf_addr, (void *) p, (size_t) len);
             pval->svalue.len_alloc = len + 32;
             pval->svalue.len_used = len;
          }
@@ -3820,6 +3842,7 @@ int bdb_open(DBXMETH *pmeth)
    pcon->p_bdb_so->penv = NULL;
    if (pcon->env_dir[0]) {
       rc = pcon->p_bdb_so->p_db_env_create(&(pcon->p_bdb_so->penv), 0);
+
       if (rc != 0) {
          /* Error handling goes here */
          strcpy(pcon->error, "Cannot create a BDB environment object");
@@ -3921,7 +3944,6 @@ int bdb_next(DBXMETH *pmeth, DBXKEY *pkey, DBXVAL *pkeyval, DBXVAL *pdataval, in
 /*
    printf("\r\n ******* bdb_next ******* argn=%d; pkeyval->svalue.buf_addr=%p; pkey->ibuffer.buf_addr=%p;\r\n", pkey->argc, pkeyval->svalue.buf_addr, pkey->ibuffer.buf_addr);
 */
-
    memset(&key, 0, sizeof(DBT));
    memset(&key0, 0, sizeof(DBT));
    memset(&data, 0, sizeof(DBT));
@@ -5827,6 +5849,9 @@ int dbx_close(DBXMETH *pmeth)
 __try {
 #endif
 
+/*
+   printf("\r\n******* Graceful Close *******\r\n");
+*/
    no_connections = 0;
 
    dbx_enter_critical_section((void *) &dbx_async_mutex);
@@ -5843,9 +5868,9 @@ __try {
       }
    }
    dbx_leave_critical_section((void *) &dbx_async_mutex);
-
-   /* printf("\r\ndbx_close: no_connections=%d\r\n", no_connections); */
-
+/*
+   printf("\r\ndbx_close: no_connections=%d\r\n", no_connections);
+*/
    if (pcon->dbtype == DBX_DBTYPE_BDB) {
 
       /* printf("\r\ndbx_close: no_connections=%d; pcon->p_bdb_so->multiple_connections=%d;\r\n", no_connections, pcon->p_bdb_so->multiple_connections); */
@@ -6044,6 +6069,15 @@ __try {
       /* v1.3.9 */
       pmeth->output_val.svalue.len_used = data.size;
 
+      /* v1.3.11 */
+/*
+      if (pmeth->output_val.svalue.len_used == 0 && rc != DB_NOTFOUND) {
+         if (!strncmp((char *) pmeth->key.args[1].svalue.buf_addr, (char *) "node", 4) || !strncmp((char *) pmeth->key.args[3].svalue.buf_addr, (char *) "lastChild", 9)) {
+            dbx_dump_mref(pcon, pmeth, (char *) "get", &(pmeth->output_val), rc);
+         }
+      }
+*/
+
       if (rc == DB_NOTFOUND) {
          rc = CACHE_ERUNDEF;
       }
@@ -6070,6 +6104,17 @@ __try {
       rc = lmdb_start_ro_transaction(pmeth, 0);
       rc = pcon->p_lmdb_so->p_mdb_get(pcon->p_lmdb_so->ptxnro, pcon->p_lmdb_so->db, &key, &data);
       lmdb_commit_ro_transaction(pmeth, 0);
+
+      /* v1.3.11 */
+/*
+      if (pmeth->output_val.svalue.len_used == 0 && rc != MDB_NOTFOUND) {
+         if (pmeth->key.argc > 3) {
+            if (!strncmp((char *) pmeth->key.args[1].svalue.buf_addr, (char *) "node", 4) || !strncmp((char *) pmeth->key.args[3].svalue.buf_addr, (char *) "lastChild", 9)) {
+               dbx_dump_mref(pcon, pmeth, (char *) "get", &(pmeth->output_val), rc);
+            }
+         }
+      }
+*/
 
       if (rc == CACHE_SUCCESS) {
          dbx_memcpy_exx(&(pmeth->output_val.svalue), (void *) data.mv_data, data.mv_size);
@@ -6161,12 +6206,50 @@ __try {
       data.data = (void *) pmeth->key.args[ndata].svalue.buf_addr;
       data.size = (u_int32_t) pmeth->key.args[ndata].svalue.len_used;
 
+      /* v1.3.11 */
+/*
+      if (pmeth->key.args[ndata].svalue.len_used == 0) {
+         if (!strncmp((char *) pmeth->key.args[1].svalue.buf_addr, (char *) "node", 4) || !strncmp((char *) pmeth->key.args[3].svalue.buf_addr, (char *) "lastChild", 9)) {
+            dbx_dump_mref(pcon, pmeth, (char *) "set", NULL, rc);
+         }
+      }
+*/
       rc = pcon->p_bdb_so->pdb->put(pcon->p_bdb_so->pdb, NULL, &key, &data, 0);
 
-/* v1.1.4
+      /* v1.3.11 */
+      pcon->p_bdb_so->pdb->sync(pcon->p_bdb_so->pdb, 0);
+
+      /* v1.3.11 - a test to read back data to confirm that update worked */
+/*
       {
-         int rc1;
-         rc1 = pcon->p_bdb_so->pdb->sync(pcon->p_bdb_so->pdb, 0);
+         int rc2, n;
+         DBT datar;
+         char *buffer, *p, *pr;
+
+         buffer = (char *) dbx_malloc((int) (data.size + 32), 0);
+         memset(&datar, 0, sizeof(DBT));
+         datar.flags = DB_DBT_USERMEM;
+         datar.data = (void *) buffer;
+         datar.ulen = data.size + 32;
+         rc2 = pcon->p_bdb_so->pdb->get(pcon->p_bdb_so->pdb, NULL, &key, &datar, 0);
+         if (rc2 != CACHE_SUCCESS) {
+            printf("\r\n set - bad return - rc=%d", rc);
+            dbx_dump_mref(pcon, pmeth, (char *) "set", NULL, rc);
+         }
+         if (data.size != datar.size) {
+            printf("\r\n set - bad value - wrong length (%d %d)", (int) data.size, (int) datar.size);
+            dbx_dump_mref(pcon, pmeth, (char *) "set", NULL, rc);
+         }
+         p = (char *) data.data;
+         pr = (char *) datar.data;
+         for (n = 0; n < (int) data.size; n ++) {
+            if (p[n] != pr[n]) {
+               printf("\r\n set - bad value - wrong value (%d %d)", (int) data.size, (int) datar.size);
+               dbx_dump_mref(pcon, pmeth, (char *) "set", NULL, rc);
+               break;
+            }
+         }
+         dbx_free((void *) buffer, 0);
       }
 */
 
@@ -6210,6 +6293,15 @@ __try {
 
       pcon->p_lmdb_so->p_mdb_txn_commit(pcon->p_lmdb_so->ptxn);
       pcon->tlevel --;
+
+      /* v1.3.11 */
+/*
+      if (pmeth->key.args[ndata].svalue.len_used == 0) {
+         if (!strncmp((char *) pmeth->key.args[1].svalue.buf_addr, (char *) "node", 4) || !strncmp((char *) pmeth->key.args[3].svalue.buf_addr, (char *) "lastChild", 9)) {
+            dbx_dump_mref(pcon, pmeth, (char *) "set", NULL, rc);
+         }
+      }
+*/
    }
 
    if (rc == CACHE_SUCCESS) {
@@ -6273,6 +6365,7 @@ __try {
       memset(&key0, 0, sizeof(DBT));
       memset(&data, 0, sizeof(DBT));
       key.flags = DB_DBT_USERMEM;
+      key0.flags = DB_DBT_USERMEM;
       data.flags = DB_DBT_USERMEM;
 
       if (pcon->key_type == DBX_KEYTYPE_INT) {
@@ -6313,6 +6406,19 @@ __try {
          n = 1;
       }
 
+      /* v1.3.11 */
+/*
+      if (pmeth->key.argc > 2) {
+         if (!strncmp((char *) pmeth->key.args[3].svalue.buf_addr, (char *) "lastChild", 9) && n == 0) {
+            if (n == 1 && data.size == 0) {
+               n = 0;
+               printf("\r\n *** must be undefined - no data !!!");
+            }
+            dbx_dump_mref(pcon, pmeth, (char *) "defined", NULL, n);
+         }
+      }
+*/
+
       if (pcon->key_type == DBX_KEYTYPE_M) {
          rc = pcon->p_bdb_so->pdb->cursor(pcon->p_bdb_so->pdb, NULL, &pcursor, 0);
          if (rc == CACHE_SUCCESS) {
@@ -6344,39 +6450,6 @@ __try {
       }
       rc = CACHE_SUCCESS;
    }
-/*
-      MDB_val key, data;
-
-      if (pcon->key_type == DBX_KEYTYPE_INT) {
-         key.mv_data = (void *) &(pmeth->key.args[0].num.int32);
-         key.mv_size = (size_t) sizeof(pmeth->key.args[0].num.int32);
-      }
-      else if (pcon->key_type == DBX_KEYTYPE_STR) {
-         key.mv_data = (void *) pmeth->key.args[0].svalue.buf_addr;
-         key.mv_size = (size_t) pmeth->key.args[0].svalue.len_used;
-      }
-      else {
-         key.mv_data = (void *) pmeth->key.ibuffer.buf_addr;
-         key.mv_size = (size_t) pmeth->key.args[pmeth->key.argc - 1].csize;;
-      }
-
-      data.mv_data = (void *) pmeth->output_val.svalue.buf_addr;
-      data.mv_size = (size_t)  pmeth->output_val.svalue.len_alloc;
-
-      rc = pcon->p_lmdb_so->p_mdb_get(pcon->p_lmdb_so->ptxn, pcon->p_lmdb_so->db, &key, &data);
-
-      if (rc == CACHE_SUCCESS) {
-         pmeth->output_val.svalue.len_used = (unsigned int) data.mv_size;
-         dbx_memcpy_exx(&(pmeth->output_val.svalue), (void *) data.mv_data, data.mv_size);
-      }
-      else {
-         pmeth->output_val.svalue.len_used = 0;
-         if (rc == MDB_NOTFOUND) {
-            rc = CACHE_ERUNDEF;
-         }
-      }
-
-*/
    else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
       MDB_val key, key0, data;
       MDB_cursor *pcursor;
@@ -6443,17 +6516,26 @@ __try {
       rc = CACHE_SUCCESS;
    }
 
-
    strcpy(pmeth->output_val.svalue.buf_addr, "0");
    pmeth->output_val.svalue.len_used = 0;
 
    if (rc == CACHE_SUCCESS || rc == CACHE_ERUNDEF) {
+      pmeth->output_val.num.int32 = n; /* v1.3.11 */
       dbx_create_string(&(pmeth->output_val.svalue), (void *) &n, DBX_DTYPE_INT);
       rc = CACHE_SUCCESS;
    }
    else {
       dbx_error_message(pmeth, rc, (char *) "dbx_defined");
    }
+
+   /* v1.3.11 */
+/*
+   if (pmeth->key.argc > 2) {
+      if (!strncmp((char *) pmeth->key.args[3].svalue.buf_addr, (char *) "lastChild", 9)) {
+         dbx_dump_mref(pcon, pmeth, (char *) "defined", &(pmeth->output_val), rc);
+      }
+   }
+*/
 
 dbx_defined_exit:
 
@@ -6521,6 +6603,7 @@ __try {
          key.size = (u_int32_t) pmeth->key.args[0].svalue.len_used;
       }
       else { /* mumps */
+
          key.data = (void *) pmeth->key.ibuffer.buf_addr;
          key.size = (u_int32_t) pmeth->key.args[pmeth->key.argc - 1].csize;
          key.ulen = (u_int32_t) pmeth->key.ibuffer.len_alloc;
@@ -6537,13 +6620,27 @@ __try {
       rc = pcon->p_bdb_so->pdb->del(pcon->p_bdb_so->pdb, NULL, &key, 0);
       n = rc;
 
+      /* v1.3.11 */
+/*
+      if (pmeth->key.argc > 1) {
+         dbx_dump_mref(pcon, pmeth, (char *) "kill", NULL, rc);
+      }
+*/
+
       if (pcon->key_type == DBX_KEYTYPE_M) {
          rc = pcon->p_bdb_so->pdb->cursor(pcon->p_bdb_so->pdb, NULL, &pcursor, 0);
+
          if (rc == CACHE_SUCCESS) {
 /*
             printf("\r\nkey.ulen=%d; pmeth->key.argc=%d; pmeth->key.args[pmeth->key.argc - 1].csize=%d", (int) key.ulen, pmeth->key.argc, pmeth->key.args[pmeth->key.argc - 1].csize);
 */
             rc = bdb_cursor_get(pcursor, &key, &(pmeth->key.ibuffer), &data, &(pmeth->output_val.svalue), DB_SET_RANGE); /* v1.3.9 */
+
+            if (rc == DB_NOTFOUND) { /* v1.3.11 */
+               rc = CACHE_SUCCESS;
+               goto dbx_delete_exit;
+            }
+
             if (rc != CACHE_SUCCESS) {
                dbx_error_message(pmeth, rc, (char *) "dbx_delete");
                goto dbx_delete_exit;
@@ -6556,13 +6653,16 @@ __try {
             if (rc == CACHE_SUCCESS && !bdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
                for (;;) {
                   /* dbx_dump_key((char *) key.data, (int) key.size); */
-                  rc = pcon->p_bdb_so->pdb->del(pcon->p_bdb_so->pdb, NULL, &key, 0);
-
+                  /* rc = pcon->p_bdb_so->pdb->del(pcon->p_bdb_so->pdb, NULL, &key, 0); */
+                  rc = pcursor->del(pcursor, 0); /* v1.3.11 */
                   rc = bdb_cursor_get(pcursor, &key, &(pmeth->key.ibuffer), &data, &(pmeth->output_val.svalue), DB_NEXT); /* v1.3.9 */
+                  if (rc == DB_NOTFOUND) { /* v1.3.11 */
+                     rc = CACHE_SUCCESS;
+                     break;
+                  }
                   if (rc != CACHE_SUCCESS) {
                      dbx_error_message(pmeth, rc, (char *) "dbx_delete");
                   }
-
                   if (rc != CACHE_SUCCESS || bdb_key_compare(&key, &key0, (int) pmeth->key.args[pmeth->key.argc - 1].csize, pcon->key_type)) {
                      break;
                   }
@@ -6572,6 +6672,9 @@ __try {
          }
          rc = CACHE_SUCCESS;
       }
+
+      pcon->p_bdb_so->pdb->sync(pcon->p_bdb_so->pdb, 0); /* v1.3.11 */
+
    }
    else if (pcon->dbtype == DBX_DBTYPE_LMDB) {
       MDB_val key, key0, data;
@@ -7142,6 +7245,7 @@ __try {
    printf("\r\nlen=%d\r\n", pmeth->key.ibuffer.len_used);
    dbx_dump_key((char *) pmeth->key.ibuffer.buf_addr, (int) pmeth->key.ibuffer.len_used);
 */
+
    DBX_DB_LOCK(0);
 
    ref1_csize = 0;
@@ -8672,6 +8776,56 @@ int dbx_create_string(DBXSTR *pstr, void *data, short type)
 }
 
 
+/* v1.3.11 */
+int dbx_dump_mref(DBXCON *pcon, DBXMETH *pmeth, char *cmnd, DBXVAL *presult, int rc)
+{
+   int n;
+   char buffer[8192], val[256];
+
+   sprintf(buffer, "%s ", cmnd);
+
+   for (n = 0; n < pmeth->key.argc; n ++) {
+      val[0] = '\0';
+      strncpy(val, pmeth->key.args[n].svalue.buf_addr, pmeth->key.args[n].svalue.len_used);
+      val[pmeth->key.args[n].svalue.len_used] = '\0';
+      if (n == 0) {
+         strcat(buffer, val);
+         strcat(buffer, "(");
+      }
+      else if (strstr(cmnd, "set") && n == (pmeth->key.argc - 1)) {
+         strcat(buffer, ")=");
+         strcat(buffer, val);
+         sprintf(val, " (len=%d)", pmeth->key.args[n].svalue.len_used);
+         strcat(buffer, val);
+      }
+      else {
+         if (n > 1) {
+            strcat(buffer, ",");
+         }
+         strcat(buffer, val);
+         if (n == (pmeth->key.argc - 1)) {
+            strcat(buffer, ")");
+         }
+      }
+   }
+
+   sprintf(val, " (rc=%d)", rc);
+   strcat(buffer, val);
+   if (presult) {
+      strcpy(val, "");
+      if (presult->svalue.len_used > 0) {
+         strncpy(val, presult->svalue.buf_addr, presult->svalue.len_used);
+         val[presult->svalue.len_used] = '\0';
+      }
+      strcat(buffer, "result=");
+      strcat(buffer, val);
+   }
+
+   printf("\r\n%s", buffer);
+
+   return 0;
+}
+
 
 int dbx_log_transmission(DBXCON *pcon, DBXMETH *pmeth, char *name)
 {
@@ -8769,7 +8923,7 @@ int dbx_buffer_dump(DBXCON *pcon, void *buffer, unsigned int len, char *title, u
 int dbx_log_event(DBXCON *pcon, char *message, char *title, int level)
 {
    int len, n;
-   char timestr[64], heading[256], buffer[2048];
+   char timestr[64], heading[256];
    char *p_buffer;
    time_t now = 0;
 #if defined(_WIN32)
@@ -8783,6 +8937,8 @@ int dbx_log_event(DBXCON *pcon, char *message, char *title, int level)
 #ifdef _WIN32
 __try {
 #endif
+
+   p_buffer = NULL;
 
    now = time(NULL);
    sprintf(timestr, "%s", ctime(&now));
@@ -8800,13 +8956,11 @@ __try {
 
    len = (int) strlen(heading) + (int) strlen(title) + (int) strlen(message) + 20;
 
-   if (len < 2000)
-      p_buffer = buffer;
-   else
-      p_buffer = (char *) malloc(sizeof(char) * len);
+   p_buffer = (char *) dbx_malloc(sizeof(char) * len, 0);
 
-   if (p_buffer == NULL)
+   if (p_buffer == NULL) {
       return 0;
+   }
 
    p_buffer[0] = '\0';
    strcpy(p_buffer, heading);
@@ -8853,8 +9007,9 @@ __try {
 
 #endif
 
-   if (p_buffer != buffer)
-      free((void *) p_buffer);
+   if (p_buffer) {
+      dbx_free((void *) p_buffer, 0);
+   }
 
    return 1;
 
