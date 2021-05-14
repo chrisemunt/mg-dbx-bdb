@@ -3,11 +3,10 @@
 High speed Synchronous and Asynchronous access to Berkeley DB and LMDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-13 May 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+14 May 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* The M database emulation mode is an experimental project at this stage.
-* The Berkeley DB and LMDB mode should be stable.
 * Verified to work with Node.js v14 to v16.
+* Simple Synchronous/Asynchronous access to Berkeley DB or LMDB and an implementation of a **Global Storage** solution for both.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
 Contents
@@ -25,9 +24,7 @@ Contents
 
 ## <a name="Intro"></a> Introduction
 
-More will be written about the aims and rationale for this project in due course.  In the meantime, what follows in this section is a brief description of the functionality provided by this Node.js add-on module.
-
-There are two parts to this project.  Firstly, simple synchronous and asynchronous access to Berkeley DB and/or LMDB B-Tree storage using either integer or string based keys.  Secondly, an emulation of the M database storage model is layered on top of these two B-Tree storage solutions.
+There are two parts to this project.  Firstly, simple synchronous and asynchronous access to Berkeley DB and/or LMDB B-Tree storage using either integer or string based keys.  Secondly, an emulation of the **M Global Storage** Database is layered on top of these two B-Tree storage solutions. [This Document](https://github.com/robtweed/global_storage/blob/master/README.md) describes in detail the **Global Storage** model and provides the rationale for the **mg-dbx-bdb** project.
 
 ### Berkeley DB and LMDB Mode
 
@@ -42,9 +39,9 @@ Examples:
        db[2]="Jane Jones"
 
 
-### M emulation Mode
+### M Global Storage emulation Mode
 
-The M database is broadly B-Tree based but includes extra structural elements.  The database is divided up into discrete sections known, in M, as **global variables** or **"globals"** for short.  You can think of each M **global** as being conceptually similar to a table in a relational database.  Records in each **global** are identified by a key.  In the M model, each key can consist of one or many individual key items, giving the dataset the multidimensional characteristics of the M storage model.  In M, keys are known as **subscripts** and are conceptually similar to a (primary) key in a relational database.
+The **M Global Storage** database is broadly B-Tree based but includes extra structural elements.  The database is divided up into discrete sections known, in M, as **global variables** or **"globals"** for short.  You can think of each M **global** as being conceptually similar to a table in a relational database.  Records in each **global** are identified by a key.  In the M model, each key can consist of one or many individual key items, giving the dataset the multidimensional characteristics of the M storage model.  In M, keys are known as **subscripts** and are conceptually similar to a (primary) key in a relational database.
 
        database[{global variables}, {keys ...}]=value
 
@@ -855,3 +852,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.3.12 (13 May 2021)
 
 * Following on from v1.3.11: correct a fault that led to the following BDB error being returned when deleting records from the database: BDB0697 Write attempted on read-only cursor.
+
+### v1.3.12-a (14 May 2021)
+
+* This change represents an update to this document. We have added a link to a suite of documents about [Global Storage](https://github.com/robtweed/global_storage/blob/master/README.md) databases, the rationale for using them, and a study of the relative performance of various implementations.
