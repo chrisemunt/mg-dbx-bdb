@@ -3,9 +3,9 @@
 High speed Synchronous and Asynchronous access to Berkeley DB and LMDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-14 May 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+20 October 2021, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
-* Verified to work with Node.js v14 to v16.
+* Verified to work with Node.js v14 to v17.
 * Simple Synchronous/Asynchronous access to Berkeley DB or LMDB and an implementation of a **Global Storage** solution for both.
 * [Release Notes](#RelNotes) can be found at the end of this document.
 
@@ -856,3 +856,8 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.3.12-a (14 May 2021)
 
 * This change represents an update to this document. We have added a link to a suite of documents about [Global Storage](https://github.com/robtweed/global_storage/blob/master/README.md) databases, the rationale for using them, and a study of the relative performance of various implementations.
+
+### v1.3.12-b (20 October 2021)
+
+* Verify that **mg-dbx-bdb** will build and work with Node.js v17.x.x.
+
