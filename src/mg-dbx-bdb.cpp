@@ -3,7 +3,7 @@
    | mg-dbx-bdb.node                                                          |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2016-2021 M/Gateway Developments Ltd,                      |
+   | Copyright (c) 2016-2022 M/Gateway Developments Ltd,                      |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -75,6 +75,17 @@ Version 1.3.11 13 May 2021:
 Version 1.3.12 13 May 2021:
    Following on from v1.3.11: correct a fault that led to the following BDB error being returned when deleting records from the database:
    - BDB0697 Write attempted on read-only cursor.
+
+Version 1.3.12a 14 May 2021:
+   This change represents an update to this document.
+      We have added a link to a suite of documents about [Global Storage](https://github.com/robtweed/global_storage/blob/master/README.md) databases,
+      the rationale for using them, and a study of the relative performance of various implementations.
+
+Version 1.3.12b 20 October 2021:
+   Verify that mg-dbx-bdb will build and work with Node.js v17.x.x.
+
+Version 1.3.12c 25 April 2022:
+   Verify that mg-dbx-bdb will build and work with Node.js v18.x.x.
 
 */
 
