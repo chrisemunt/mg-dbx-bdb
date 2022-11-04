@@ -87,6 +87,9 @@ Version 1.3.12b 20 October 2021:
 Version 1.3.12c 25 April 2022:
    Verify that mg-dbx-bdb will build and work with Node.js v18.x.x.
 
+Version 1.3.12d 4 November 2022:
+   Verify that mg-dbx-bdb will build and work with Node.js v19.x.x.
+
 */
 
 
