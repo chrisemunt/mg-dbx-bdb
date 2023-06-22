@@ -3,7 +3,7 @@
 High speed Synchronous and Asynchronous access to Berkeley DB and LMDB from Node.js.
 
 Chris Munt <cmunt@mgateway.com>  
-3 May 2023, M/Gateway Developments Ltd [http://www.mgateway.com](http://www.mgateway.com)
+22 June 2023, MGateway Ltd [http://www.mgateway.com](http://www.mgateway.com)
 
 * Verified to work with Node.js v14 to v20.
 * Simple Synchronous/Asynchronous access to Berkeley DB or LMDB and an implementation of a **Global Storage** solution for both.
@@ -779,7 +779,7 @@ Logging can be switched off by calling the **setloglevel** function without spec
 
 ## <a name="License"></a> License
 
-Copyright (c) 2018-2023 M/Gateway Developments Ltd,
+Copyright (c) 2018-2023 MGateway Ltd,
 Surrey UK.                                                      
 All rights reserved.
  
@@ -872,3 +872,7 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### v1.3.12e (3 May 2023)
 
 * Verify that **mg-dbx-bdb** will build and work with Node.js v20.x.x.
+
+### v1.3.12f (22 June 2023)
+
+* Documentation update.
