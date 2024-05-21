@@ -3,7 +3,7 @@
    | mg-dbx-bdb.node                                                          |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2023 MGateway Ltd                                     |
+   | Copyright (c) 2019-2024 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -95,6 +95,9 @@ Version 1.3.12e 3 May 2023:
 
 Version 1.3.12f 22 June 2023:
    Documentation update.
+
+Version 1.3.13 21 May 2024:
+   Verify that mg-dbx-bdb will build and work with Node.js v22.x.x.
 
 */
 
