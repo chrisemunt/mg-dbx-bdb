@@ -877,6 +877,6 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 * Documentation update.
 
-## v1.3.13 (21 May 2024)
+### v1.3.13 (21 May 2024)
 
 * Verify that **mg-dbx-bdb** will build and work with Node.js v22.x.x.
