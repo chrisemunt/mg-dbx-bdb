@@ -3,7 +3,7 @@
    | mg-dbx-bdb.node                                                          |
    | Author: Chris Munt cmunt@mgateway.com                                    |
    |                    chris.e.munt@gmail.com                                |
-   | Copyright (c) 2019-2025 MGateway Ltd                                     |
+   | Copyright (c) 2019-2026 MGateway Ltd                                     |
    | Surrey UK.                                                               |
    | All rights reserved.                                                     |
    |                                                                          |
@@ -101,6 +101,9 @@ Version 1.3.13 21 May 2024:
 
 Version 1.3.14 29 May 2025:
    Verify that mg-dbx-bdb will build and work with Node.js v24.x.x.
+
+Version 1.3.15 24 May 2026:
+   Verify that mg-dbx-bdb will build and work with Node.js v26.x.x.
 
 */
 
@@ -213,7 +216,13 @@ void DBX_DBNAME::Init(Handle<Object> exports)
 {
 
 #if DBX_NODE_VERSION >= 120000
+/* v1.3.15 */
+#if DBX_NODE_VERSION >= 250000
+   Isolate* isolate = Isolate::GetCurrent();
+#else
    Isolate* isolate = exports->GetIsolate();
+#endif
+
    Local<Context> icontext = isolate->GetCurrentContext();
 
    Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate, New);
@@ -2695,7 +2704,12 @@ extern "C" NODE_MODULE_EXPORT void
 NODE_MODULE_INITIALIZER(Local<Object> exports,
                         Local<Value> module,
                         Local<Context> context) {
+/* v1.3.15 */
+#if DBX_NODE_VERSION >= 250000
+   Isolate* isolate = Isolate::GetCurrent();
+#else
    Isolate* isolate = context->GetIsolate();
+#endif
 
    /* Create a new instance of dbxAddonData for this instance of the addon. */
    dbxAddonData* data = new dbxAddonData(isolate, exports);
